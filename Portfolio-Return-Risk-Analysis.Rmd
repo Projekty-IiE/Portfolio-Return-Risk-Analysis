@@ -1,5 +1,540 @@
 ---
-title: "Portfolio-Return-Risk-Analysis"
-output: html_document
+title: "Stock Return Analysis: Permutation Tests & Portfolio Value at Risk"
+subtitle: "Apple Inc. (AAPL) vs Microsoft Corp. (MSFT) — 2021–2024"
+author: "Statistical Finance Report"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    fig_width: 10
+    fig_height: 5
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.align  = "center"
+)
+set.seed(42)
+```
+
+---
+
+# 1. Introduction
+
+This report analyses daily stock prices of **Apple Inc. (AAPL)** and **Microsoft Corp. (MSFT)** over the period **2021–2024** (approximately 4 years of trading data). The study covers:
+
+1. Data download and computation of logarithmic daily returns.
+2. Permutation-based hypothesis tests on covariance, variance equality, and equality of expected returns.
+3. Portfolio profit analysis: buying 100 shares of each stock and selling 100 trading days later.
+4. Comparison of the empirical profit distribution with a fitted normal distribution.
+5. Empirical and parametric (normal) **Value at Risk (VaR)** at the 5%, 1%, and 0.1% levels.
+
+---
+
+# 2. Data & Returns
+
+## 2.1 Packages and Data Download
+
+```{r packages-data}
+# Install missing packages automatically
+required_packages <- c("quantmod", "ggplot2", "gridExtra", "moments", "knitr", "kableExtra")
+for (pkg in required_packages) {
+  if (!requireNamespace(pkg, quietly = TRUE))
+    install.packages(pkg, repos = "https://cloud.r-project.org")
+}
+
+library(quantmod)
+library(ggplot2)
+library(gridExtra)
+library(moments)
+library(knitr)
+library(kableExtra)
+
+# Download adjusted closing prices from Yahoo Finance
+start_date <- "2021-01-01"
+end_date   <- "2024-12-31"
+
+getSymbols("AAPL", src = "yahoo", from = start_date, to = end_date, auto.assign = TRUE)
+getSymbols("MSFT", src = "yahoo", from = start_date, to = end_date, auto.assign = TRUE)
+
+price_aapl <- as.numeric(Ad(AAPL))
+price_msft <- as.numeric(Ad(MSFT))
+dates      <- index(Ad(AAPL))
+
+cat(sprintf("AAPL: %d observations  |  MSFT: %d observations\n",
+            length(price_aapl), length(price_msft)))
+cat(sprintf("Date range: %s  to  %s\n", min(dates), max(dates)))
+```
+
+> **Note:** We use **adjusted closing prices** (accounting for dividends and splits) to ensure comparability across time.
+
+## 2.2 Price Chart
+
+```{r price-chart, fig.height=4}
+df_prices <- data.frame(
+  date   = rep(dates, 2),
+  price  = c(price_aapl, price_msft),
+  ticker = rep(c("AAPL", "MSFT"), each = length(dates))
+)
+
+ggplot(df_prices, aes(x = date, y = price, colour = ticker)) +
+  geom_line(linewidth = 0.8) +
+  scale_colour_manual(values = c("AAPL" = "#1f77b4", "MSFT" = "#d62728")) +
+  labs(title  = "Adjusted Closing Prices: AAPL and MSFT (2021–2024)",
+       x = "Date", y = "Price (USD)", colour = "Ticker") +
+  theme_minimal(base_size = 12)
+```
+
+## 2.3 Logarithmic Daily Returns
+
+Daily log-returns are defined as:
+
+$$r_t = \ln\!\left(\frac{P_t}{P_{t-1}}\right)$$
+
+Log-returns are preferred over simple returns because they are **time-additive** and tend to be closer to normally distributed for short horizons.
+
+```{r returns}
+ret_aapl  <- diff(log(price_aapl))
+ret_msft  <- diff(log(price_msft))
+ret_dates <- dates[-1]
+n         <- length(ret_aapl)
+
+# Summary table
+summary_df <- data.frame(
+  Ticker = c("AAPL", "MSFT"),
+  N      = c(n, n),
+  Mean   = c(mean(ret_aapl), mean(ret_msft)),
+  SD     = c(sd(ret_aapl),   sd(ret_msft)),
+  Min    = c(min(ret_aapl),  min(ret_msft)),
+  Max    = c(max(ret_aapl),  max(ret_msft)),
+  Skewness = c(skewness(ret_aapl), skewness(ret_msft)),
+  ExKurtosis = c(kurtosis(ret_aapl) - 3, kurtosis(ret_msft) - 3)
+)
+
+kable(summary_df, digits = 6,
+      caption = "Descriptive Statistics of Daily Log-Returns",
+      col.names = c("Ticker","N","Mean","Std Dev","Min","Max","Skewness","Ex. Kurtosis")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE)
+```
+
+```{r returns-chart, fig.height=4}
+df_ret <- data.frame(
+  date   = rep(ret_dates, 2),
+  ret    = c(ret_aapl, ret_msft) * 100,
+  ticker = rep(c("AAPL","MSFT"), each = n)
+)
+
+ggplot(df_ret, aes(x = date, y = ret, colour = ticker)) +
+  geom_line(alpha = 0.55, linewidth = 0.4) +
+  scale_colour_manual(values = c("AAPL" = "#1f77b4", "MSFT" = "#d62728")) +
+  labs(title  = "Daily Log-Returns (%) — AAPL and MSFT",
+       x = "Date", y = "Return (%)", colour = "Ticker") +
+  theme_minimal(base_size = 12)
+```
+
+---
+
+# 3. Permutation Tests
+
+Permutation (randomisation) tests are **non-parametric** inference procedures. They require no distributional assumptions. The key idea is:
+
+> Under the null hypothesis the observed test statistic should be no more extreme than what we would expect by **random reassignment** of the data.
+
+We use **N = 10,000 permutations** for all tests. All p-values are two-sided.
+
+```{r perm-setup}
+N_PERM   <- 10000
+combined <- c(ret_aapl, ret_msft)   # pooled sample (used in tests 3b and 3c)
+```
+
+---
+
+## 3.1 Test of Covariance Significance
+
+### Hypotheses
+
+$$H_0: \text{Cov}(r_{\text{AAPL}},\, r_{\text{MSFT}}) = 0 \quad \text{(returns are linearly independent)}$$
+
+$$H_1: \text{Cov}(r_{\text{AAPL}},\, r_{\text{MSFT}}) \neq 0 \quad \text{(returns are linearly associated)}$$
+
+**Test statistic:** $T = \widehat{\text{Cov}}(r_{\text{AAPL}},\, r_{\text{MSFT}})$
+
+Under $H_0$ the pairing between the two series is arbitrary, so we break it by randomly permuting one series. The permutation distribution approximates the sampling distribution of the covariance under $H_0$.
+
+```{r perm-cov, fig.height=4}
+obs_cov  <- cov(ret_aapl, ret_msft)
+perm_cov <- replicate(N_PERM, cov(sample(ret_aapl), ret_msft))
+p_val_cov <- mean(abs(perm_cov) >= abs(obs_cov))
+
+# Plot
+ggplot(data.frame(cov = perm_cov), aes(x = cov)) +
+  geom_histogram(bins = 80, fill = "#aec6cf", colour = "white", alpha = 0.85) +
+  geom_vline(xintercept =  obs_cov, colour = "red", linewidth = 1.3, linetype = "dashed") +
+  geom_vline(xintercept = -obs_cov, colour = "red", linewidth = 1.3, linetype = "dashed") +
+  annotate("text", x = obs_cov, y = Inf,
+           label = sprintf(" obs = %.2e", obs_cov),
+           vjust = 2, hjust = -0.05, colour = "red", size = 3.8) +
+  labs(title   = sprintf("Permutation Distribution of Covariance  (p = %.4f)", p_val_cov),
+       subtitle = "Red dashed lines mark ± observed covariance",
+       x = "Covariance (permuted)", y = "Count") +
+  theme_minimal(base_size = 12)
+```
+
+```{r cov-result}
+cat(sprintf("Observed covariance:  %.2e\n", obs_cov))
+cat(sprintf("Permutation p-value:  %.4f\n", p_val_cov))
+cat(sprintf("Decision (alpha=0.05): %s\n",
+            ifelse(p_val_cov < 0.05, "REJECT H0", "FAIL TO REJECT H0")))
+```
+
+### Interpretation
+
+The observed covariance (`r round(obs_cov, 6)`) lies far in the tail of the permutation distribution — the p-value is **`r round(p_val_cov, 4)`**, which is `r ifelse(p_val_cov < 0.05, "below", "above")` the significance level of 0.05. We therefore **`r ifelse(p_val_cov < 0.05, "reject H₀", "fail to reject H₀")`**. `r if(p_val_cov < 0.05) "There is strong statistical evidence that AAPL and MSFT returns are positively linearly associated. This is economically plausible: both are large-cap US tech stocks driven by many of the same macro factors (interest rates, risk appetite, sector rotation)." else "There is insufficient evidence to conclude that the returns are linearly dependent."`
+
+---
+
+## 3.2 Test of Equality of Variances
+
+### Hypotheses
+
+$$H_0: \sigma^2_{\text{AAPL}} = \sigma^2_{\text{MSFT}} \quad \text{(equal return volatility)}$$
+
+$$H_1: \sigma^2_{\text{AAPL}} \neq \sigma^2_{\text{MSFT}} \quad \text{(different volatilities)}$$
+
+**Test statistic:** $T = \ln\!\left(\hat\sigma^2_{\text{AAPL}} / \hat\sigma^2_{\text{MSFT}}\right)$
+
+We use the **log-ratio** of sample variances (rather than the raw ratio) because it is symmetric under $H_0$ and has a more stable permutation distribution. Under $H_0$, pooling both samples and randomly splitting them into two equal groups should produce a ratio close to 1 (i.e., log-ratio close to 0).
+
+```{r perm-var, fig.height=4}
+obs_var_ratio  <- var(ret_aapl) / var(ret_msft)
+perm_var_ratio <- replicate(N_PERM, {
+  perm <- sample(combined)
+  var(perm[1:n]) / var(perm[(n+1):(2*n)])
+})
+p_val_var <- mean(abs(log(perm_var_ratio)) >= abs(log(obs_var_ratio)))
+
+ggplot(data.frame(lr = log(perm_var_ratio)), aes(x = lr)) +
+  geom_histogram(bins = 80, fill = "#c8e6c9", colour = "white", alpha = 0.85) +
+  geom_vline(xintercept =  log(obs_var_ratio), colour = "red", linewidth = 1.3, linetype = "dashed") +
+  geom_vline(xintercept = -log(obs_var_ratio), colour = "red", linewidth = 1.3, linetype = "dashed") +
+  labs(title   = sprintf("Permutation Distribution of log(Var Ratio)  (p = %.4f)", p_val_var),
+       subtitle = "Red dashed lines mark ± observed log-ratio",
+       x = "log(var_AAPL / var_MSFT) — permuted", y = "Count") +
+  theme_minimal(base_size = 12)
+```
+
+```{r var-result}
+cat(sprintf("Observed variance — AAPL: %.2e\n", var(ret_aapl)))
+cat(sprintf("Observed variance — MSFT: %.2e\n", var(ret_msft)))
+cat(sprintf("Variance ratio (AAPL/MSFT): %.4f\n", obs_var_ratio))
+cat(sprintf("Permutation p-value:        %.4f\n", p_val_var))
+cat(sprintf("Decision (alpha=0.05): %s\n",
+            ifelse(p_val_var < 0.05, "REJECT H0", "FAIL TO REJECT H0")))
+```
+
+### Interpretation
+
+The variance ratio is **`r round(obs_var_ratio, 4)`**, meaning AAPL daily returns are `r ifelse(obs_var_ratio > 1, "more", "less")` volatile than MSFT. The permutation p-value is **`r round(p_val_var, 4)`**. Since this is `r ifelse(p_val_var < 0.05, "below", "above")` 0.05, we **`r ifelse(p_val_var < 0.05, "reject H₀ — the two stocks have statistically different volatilities. This has direct implications for portfolio weighting: a risk-parity strategy would allocate fewer dollars to the higher-volatility stock.", "fail to reject H₀ — we cannot distinguish the two volatilities statistically over this sample period.")`**
+
+---
+
+## 3.3 Test of Equality of Expected Returns
+
+### Hypotheses
+
+$$H_0: \mu_{\text{AAPL}} = \mu_{\text{MSFT}} \quad \text{(equal mean daily returns)}$$
+
+$$H_1: \mu_{\text{AAPL}} \neq \mu_{\text{MSFT}} \quad \text{(different mean daily returns)}$$
+
+**Test statistic:** $T = \bar r_{\text{AAPL}} - \bar r_{\text{MSFT}}$
+
+Under $H_0$ the label "AAPL" vs "MSFT" is exchangeable; randomly reassigning observations to groups should produce differences near zero.
+
+```{r perm-mean, fig.height=4}
+obs_diff_mean  <- mean(ret_aapl) - mean(ret_msft)
+perm_diff_mean <- replicate(N_PERM, {
+  perm <- sample(combined)
+  mean(perm[1:n]) - mean(perm[(n+1):(2*n)])
+})
+p_val_mean <- mean(abs(perm_diff_mean) >= abs(obs_diff_mean))
+
+ggplot(data.frame(dm = perm_diff_mean), aes(x = dm)) +
+  geom_histogram(bins = 80, fill = "#ffe0b2", colour = "white", alpha = 0.85) +
+  geom_vline(xintercept =  obs_diff_mean, colour = "red", linewidth = 1.3, linetype = "dashed") +
+  geom_vline(xintercept = -obs_diff_mean, colour = "red", linewidth = 1.3, linetype = "dashed") +
+  labs(title   = sprintf("Permutation Distribution of Mean Difference  (p = %.4f)", p_val_mean),
+       subtitle = "Red dashed lines mark ± observed difference",
+       x = "Mean(AAPL) − Mean(MSFT) — permuted", y = "Count") +
+  theme_minimal(base_size = 12)
+```
+
+```{r mean-result}
+cat(sprintf("Mean return AAPL: %.6f  (%.4f%% daily)\n",
+            mean(ret_aapl), mean(ret_aapl)*100))
+cat(sprintf("Mean return MSFT: %.6f  (%.4f%% daily)\n",
+            mean(ret_msft), mean(ret_msft)*100))
+cat(sprintf("Observed difference:      %.2e\n", obs_diff_mean))
+cat(sprintf("Permutation p-value:      %.4f\n", p_val_mean))
+cat(sprintf("Decision (alpha=0.05): %s\n",
+            ifelse(p_val_mean < 0.05, "REJECT H0", "FAIL TO REJECT H0")))
+
+# Classical Welch t-test for comparison
+tt <- t.test(ret_aapl, ret_msft)
+cat(sprintf("Welch t-test p-value (classical):  %.4f\n", tt$p.value))
+```
+
+### Interpretation
+
+The difference in sample means is **`r formatC(obs_diff_mean, format="e", digits=2)`** per day. The permutation p-value is **`r round(p_val_mean, 4)`** `r if(!is.null(tt)) sprintf("(Welch t-test: p = %.4f)", tt$p.value)`. `r ifelse(p_val_mean < 0.05, "We reject H₀ at the 5% level — the two stocks exhibit significantly different mean daily returns over this period. Note, however, that even a statistically significant difference in daily means is economically very small in absolute terms and would be difficult to exploit after transaction costs.", "We fail to reject H₀ — the difference in average daily returns is not statistically distinguishable from zero. This is a common finding for large-cap stocks over horizons of a few years: mean return estimation is notoriously noisy.")`
+
+---
+
+## 3.4 Summary of Permutation Tests
+
+```{r perm-summary-table}
+perm_summary <- data.frame(
+  Test         = c("Covariance significance",
+                   "Equality of variances",
+                   "Equality of expected returns"),
+  H0           = c("Cov = 0", "σ²_AAPL = σ²_MSFT", "μ_AAPL = μ_MSFT"),
+  Statistic    = c(round(obs_cov, 6),
+                   round(obs_var_ratio, 4),
+                   round(obs_diff_mean, 6)),
+  p_value      = c(p_val_cov, p_val_var, p_val_mean),
+  Decision     = c(ifelse(p_val_cov  < 0.05, "Reject H₀", "Fail to reject"),
+                   ifelse(p_val_var  < 0.05, "Reject H₀", "Fail to reject"),
+                   ifelse(p_val_mean < 0.05, "Reject H₀", "Fail to reject"))
+)
+
+kable(perm_summary, digits = 4,
+      caption = "Permutation Test Results (N = 10,000, α = 0.05)",
+      col.names = c("Test","Null Hypothesis H₀","Observed Statistic","p-value","Decision (α=0.05)")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE) |>
+  column_spec(5, bold = TRUE,
+              color = ifelse(perm_summary$p_value < 0.05, "red", "darkgreen"))
+```
+
+---
+
+# 4. Portfolio Profit Analysis
+
+## 4.1 Strategy Description
+
+For every trading day $t$ we **buy 100 shares of each stock** at the closing price and **sell them 100 trading days later**:
+
+$$\Pi_t = 100 \cdot (P^{\text{AAPL}}_{t+100} - P^{\text{AAPL}}_t) + 100 \cdot (P^{\text{MSFT}}_{t+100} - P^{\text{MSFT}}_t)$$
+
+Transaction costs are ignored. The result is a time series of overlapping 100-day holding-period profits.
+
+```{r portfolio}
+N_SHARES  <- 100
+HORIZON   <- 100
+
+buy_idx   <- 1:(length(price_aapl) - HORIZON)
+sell_idx  <- buy_idx + HORIZON
+
+profit_aapl      <- N_SHARES * (price_aapl[sell_idx] - price_aapl[buy_idx])
+profit_msft      <- N_SHARES * (price_msft[sell_idx] - price_msft[buy_idx])
+profit_portfolio <- profit_aapl + profit_msft
+n_port           <- length(profit_portfolio)
+
+port_summary <- data.frame(
+  Metric = c("N (windows)", "Mean profit (USD)", "Median profit (USD)",
+             "Std Dev (USD)", "Min (USD)", "Max (USD)",
+             "Skewness", "Excess Kurtosis"),
+  Value  = c(n_port,
+             round(mean(profit_portfolio), 2),
+             round(median(profit_portfolio), 2),
+             round(sd(profit_portfolio), 2),
+             round(min(profit_portfolio), 2),
+             round(max(profit_portfolio), 2),
+             round(skewness(profit_portfolio), 4),
+             round(kurtosis(profit_portfolio) - 3, 4))
+)
+
+kable(port_summary, caption = "Descriptive Statistics — Portfolio Profit") |>
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+---
+
+## 4.2 Profit Distribution vs Normal
+
+```{r profit-histogram, fig.height=5}
+mu_port  <- mean(profit_portfolio)
+sd_port  <- sd(profit_portfolio)
+x_seq    <- seq(min(profit_portfolio) - 500, max(profit_portfolio) + 500, length.out = 600)
+df_norm  <- data.frame(x = x_seq, y = dnorm(x_seq, mu_port, sd_port))
+
+bw <- (max(profit_portfolio) - min(profit_portfolio)) / 60
+
+alpha_levels <- c(0.05, 0.01, 0.001)
+var_emp  <- quantile(profit_portfolio, probs = alpha_levels)
+var_norm <- qnorm(alpha_levels, mean = mu_port, sd = sd_port)
+
+var_lines <- data.frame(
+  x     = c(var_emp, var_norm),
+  type  = rep(c("Empirical VaR","Normal VaR"), each = 3),
+  level = rep(c("5%","1%","0.1%"), 2)
+)
+
+ggplot(data.frame(profit = profit_portfolio), aes(x = profit)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = bw,
+                 fill = "#ffcc99", colour = "white", alpha = 0.85) +
+  geom_line(data = df_norm, aes(x = x, y = y),
+            colour = "darkblue", linewidth = 1.3) +
+  geom_vline(data = subset(var_lines, type == "Empirical VaR"),
+             aes(xintercept = x, colour = level), linewidth = 1.1, linetype = "solid") +
+  geom_vline(data = subset(var_lines, type == "Normal VaR"),
+             aes(xintercept = x, colour = level), linewidth = 1.1, linetype = "dashed") +
+  scale_colour_manual(values = c("5%" = "#e63946", "1%" = "#c1121f", "0.1%" = "#6a040f")) +
+  labs(title    = "Histogram of Portfolio Profit vs Fitted Normal Distribution",
+       subtitle = sprintf("N(μ = %.1f, σ = %.1f)  |  Solid = empirical VaR, Dashed = normal VaR",
+                          mu_port, sd_port),
+       x = "Profit (USD)", y = "Density", colour = "VaR Level") +
+  theme_minimal(base_size = 12)
+```
+
+### Shapiro–Wilk Normality Test
+
+We formally test whether portfolio profits follow a normal distribution.
+
+**Hypotheses:**
+
+$$H_0: \text{Portfolio profit is normally distributed}$$
+$$H_1: \text{Portfolio profit is NOT normally distributed}$$
+
+```{r shapiro}
+sw <- shapiro.test(sample(profit_portfolio, min(5000, n_port)))
+cat(sprintf("Shapiro–Wilk test: W = %.5f,  p-value = %.4e\n", sw$statistic, sw$p.value))
+cat(sprintf("Decision (alpha=0.05): %s\n",
+            ifelse(sw$p.value < 0.05, "REJECT H0 — non-normal", "FAIL TO REJECT H0 — consistent with normal")))
+```
+
+### Q–Q Plot
+
+```{r qqplot, fig.height=4.5}
+qq_df <- data.frame(
+  theoretical = qnorm(ppoints(n_port), mean = mu_port, sd = sd_port),
+  empirical   = sort(profit_portfolio)
+)
+
+ggplot(qq_df, aes(x = theoretical, y = empirical)) +
+  geom_point(alpha = 0.35, size = 0.8, colour = "#555") +
+  geom_abline(slope = 1, intercept = 0, colour = "red", linewidth = 1.2) +
+  labs(title   = "Q–Q Plot: Portfolio Profit vs Normal Distribution",
+       subtitle = "Points on the red line indicate perfect normality",
+       x = "Theoretical Normal Quantiles (USD)", y = "Empirical Quantiles (USD)") +
+  theme_minimal(base_size = 12)
+```
+
+### Interpretation
+
+`r if(sw$p.value < 0.05) paste0("The Shapiro–Wilk test strongly rejects normality (p = ", formatC(sw$p.value, format='e', digits=2), "). The Q–Q plot confirms this: the tails deviate notably from the reference line, indicating **heavier tails** than a Gaussian distribution. This is consistent with the excess kurtosis of ", round(kurtosis(profit_portfolio)-3, 3), " and skewness of ", round(skewness(profit_portfolio), 3), ". These features — common in financial return data — mean that extreme losses (and gains) occur more frequently than a normal model predicts.") else paste0("The Shapiro–Wilk test does not reject normality at the 5% level (p = ", round(sw$p.value, 4), "). The Q–Q plot is broadly consistent with a normal distribution.")`
+
+---
+
+# 5. Value at Risk (VaR)
+
+**Value at Risk at level $\alpha$** is the threshold loss such that the probability of the portfolio return falling *below* it is $\alpha$:
+
+$$\text{VaR}_\alpha = Q_\alpha(\Pi) \quad \text{i.e.,} \quad P(\Pi \leq \text{VaR}_\alpha) = \alpha$$
+
+A *negative* VaR denotes a loss. We compute two variants:
+
+- **Empirical VaR:** the empirical $\alpha$-quantile of observed profits.  
+- **Normal VaR:** the $\alpha$-quantile of $\mathcal{N}(\hat\mu, \hat\sigma^2)$ fitted to the data.
+
+```{r var-table}
+var_df <- data.frame(
+  Level         = c("5%", "1%", "0.1%"),
+  Empirical_VaR = round(var_emp, 2),
+  Normal_VaR    = round(var_norm, 2),
+  Difference    = round(var_emp - var_norm, 2)
+)
+
+kable(var_df, caption = "Value at Risk — Empirical vs Normal (USD)",
+      col.names = c("Confidence Level", "Empirical VaR (USD)",
+                    "Normal VaR (USD)", "Difference (Emp − Norm)")) |>
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE)
+```
+
+```{r var-viz, fig.height=4}
+var_comp <- data.frame(
+  level  = rep(c("5%","1%","0.1%"), 2),
+  method = rep(c("Empirical","Normal"), each = 3),
+  value  = c(var_emp, var_norm)
+)
+var_comp$level <- factor(var_comp$level, levels = c("5%","1%","0.1%"))
+
+ggplot(var_comp, aes(x = level, y = value, fill = method)) +
+  geom_col(position = "dodge", width = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40") +
+  scale_fill_manual(values = c("Empirical" = "#e63946", "Normal" = "#457b9d")) +
+  labs(title = "Empirical vs Normal VaR by Confidence Level",
+       x = "Significance Level (α)", y = "VaR (USD)", fill = "Method") +
+  theme_minimal(base_size = 12)
+```
+
+### Interpretation
+
+| Level | Empirical VaR | Normal VaR | Observation |
+|-------|-------------|-----------|-------------|
+| **5%**   | `r round(var_emp[1],0)` USD | `r round(var_norm[1],0)` USD | `r ifelse(abs(var_emp[1]) > abs(var_norm[1]), "Emp. loss larger — normal underestimates risk", "Normal loss larger — normal overestimates risk")` |
+| **1%**   | `r round(var_emp[2],0)` USD | `r round(var_norm[2],0)` USD | `r ifelse(abs(var_emp[2]) > abs(var_norm[2]), "Emp. loss larger — normal underestimates risk", "Normal loss larger")` |
+| **0.1%** | `r round(var_emp[3],0)` USD | `r round(var_norm[3],0)` USD | `r ifelse(abs(var_emp[3]) > abs(var_norm[3]), "Emp. loss larger — normal significantly underestimates tail risk", "Normal loss larger")` |
+
+`r if(abs(var_emp[3]) > abs(var_norm[3])) "The divergence grows as α decreases (i.e., as we move deeper into the left tail). This is the **fat-tail effect**: extreme losses occur more frequently in real data than a Gaussian model predicts. Using the normal VaR at the 0.1% level would therefore **underestimate** the true tail risk, which is a well-known pitfall in financial risk management." else "The normal approximation performs reasonably well across all confidence levels for this portfolio."`
+
+---
+
+# 6. Conclusions
+
+```{r conclusions-table}
+conclusions <- data.frame(
+  Question = c(
+    "Are AAPL and MSFT returns linearly dependent?",
+    "Do they have equal volatility?",
+    "Do they have equal expected returns?",
+    "Is the portfolio profit normally distributed?",
+    "Does normal VaR capture tail risk accurately?"
+  ),
+  Finding = c(
+    ifelse(p_val_cov  < 0.05,
+           paste0("Yes — covariance is significant (p = ", round(p_val_cov, 4), ")"),
+           paste0("No evidence — covariance not significant (p = ", round(p_val_cov, 4), ")")),
+    ifelse(p_val_var  < 0.05,
+           paste0("No — variances differ significantly (p = ", round(p_val_var, 4), ")"),
+           paste0("Possibly — no significant difference (p = ", round(p_val_var, 4), ")")),
+    ifelse(p_val_mean < 0.05,
+           paste0("No — means differ significantly (p = ", round(p_val_mean, 4), ")"),
+           paste0("Possibly — no significant difference (p = ", round(p_val_mean, 4), ")")),
+    ifelse(sw$p.value < 0.05,
+           paste0("No — Shapiro–Wilk rejects normality (p = ", formatC(sw$p.value, format='e', digits=1), ")"),
+           paste0("Consistent with normal (p = ", round(sw$p.value, 4), ")")),
+    ifelse(abs(var_emp[3]) > abs(var_norm[3]),
+           "No — normal VaR underestimates extreme losses (fat tails)",
+           "Approximately yes — normal VaR is close to empirical")
+  )
+)
+
+kable(conclusions, caption = "Summary of Key Findings",
+      col.names = c("Question", "Finding")) |>
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE) |>
+  column_spec(1, bold = TRUE, width = "40%") |>
+  column_spec(2, width = "60%")
+```
+
+> **Key takeaway for risk management:** Assuming normality of portfolio returns leads to systematic underestimation of tail risk at very low probability levels. Empirical or parametric heavy-tailed distributions (e.g., Student-$t$, Cornish–Fisher expansion) should be preferred for VaR estimation at the 1% and 0.1% levels.
+
+---
+
+*Report generated with R `r R.version$major`.`r R.version$minor` · quantmod · ggplot2 · moments*
