@@ -10,7 +10,7 @@ output:
     toc_depth: 3
     theme: flatly
     highlight: tango
-    code_folding: show
+    code_folding: hide
     fig_width: 10
     fig_height: 5
 ---
@@ -45,7 +45,7 @@ This report analyses daily stock prices of **Apple Inc. (AAPL)** and **Microsoft
 
 ```{r packages-data}
 # Install missing packages automatically
-required_packages <- c("quantmod", "ggplot2", "gridExtra", "moments", "knitr", "kableExtra")
+required_packages <- c("quantmod", "ggplot2", "gridExtra", "moments", "knitr", "kableExtra", "qqplotr", "scales")
 for (pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE))
     install.packages(pkg, repos = "https://cloud.r-project.org")
@@ -57,6 +57,8 @@ library(gridExtra)
 library(moments)
 library(knitr)
 library(kableExtra)
+library(qqplotr)
+library(scales)
 
 # Download adjusted closing prices from Yahoo Finance
 start_date <- "2021-01-01"
@@ -79,17 +81,24 @@ cat(sprintf("Date range: %s  to  %s\n", min(dates), max(dates)))
 ## 2.2 Price Chart
 
 ```{r price-chart, fig.height=4}
+# Index prices to 100 at the start date so relative performance is directly comparable.
+# Raw prices differ in level (AAPL ~$130 vs MSFT ~$220 at start), which would make
+# one series appear visually flatter even if its percentage moves are identical.
 df_prices <- data.frame(
-  date   = rep(dates, 2),
-  price  = c(price_aapl, price_msft),
-  ticker = rep(c("AAPL", "MSFT"), each = length(dates))
+  date         = rep(dates, 2),
+  price        = c(price_aapl, price_msft),
+  price_indexed = c(price_aapl / price_aapl[1] * 100,
+                    price_msft / price_msft[1] * 100),
+  ticker       = rep(c("AAPL", "MSFT"), each = length(dates))
 )
 
-ggplot(df_prices, aes(x = date, y = price, colour = ticker)) +
+ggplot(df_prices, aes(x = date, y = price_indexed, colour = ticker)) +
   geom_line(linewidth = 0.8) +
+  geom_hline(yintercept = 100, linetype = "dotted", colour = "grey50") +
   scale_colour_manual(values = c("AAPL" = "#1f77b4", "MSFT" = "#d62728")) +
-  labs(title  = "Adjusted Closing Prices: AAPL and MSFT (2021–2024)",
-       x = "Date", y = "Price (USD)", colour = "Ticker") +
+  labs(title    = "Relative Performance: AAPL vs MSFT (2021–2024)",
+       subtitle = "Both series indexed to 100 at 2021-01-04 — shows percentage growth, not price level",
+       x = "Date", y = "Indexed Price (start = 100)", colour = "Ticker") +
   theme_minimal(base_size = 12)
 ```
 
@@ -174,18 +183,26 @@ obs_cov  <- cov(ret_aapl, ret_msft)
 perm_cov <- replicate(N_PERM, cov(sample(ret_aapl), ret_msft))
 p_val_cov <- mean(abs(perm_cov) >= abs(obs_cov))
 
-# Plot
-ggplot(data.frame(cov = perm_cov), aes(x = cov)) +
-  geom_histogram(bins = 80, fill = "#aec6cf", colour = "white", alpha = 0.85) +
-  geom_vline(xintercept =  obs_cov, colour = "red", linewidth = 1.3, linetype = "dashed") +
-  geom_vline(xintercept = -obs_cov, colour = "red", linewidth = 1.3, linetype = "dashed") +
+# Shade bars that are at least as extreme as the observed statistic (two-sided).
+# This makes the p-value visually intuitive: shaded area / total area = p-value.
+df_perm_cov <- data.frame(cov = perm_cov)
+df_perm_cov$extreme <- abs(df_perm_cov$cov) >= abs(obs_cov)
+
+ggplot(df_perm_cov, aes(x = cov, fill = extreme)) +
+  geom_histogram(bins = 80, colour = "white", alpha = 0.9) +
+  scale_fill_manual(values = c("FALSE" = "#aec6cf", "TRUE" = "#e63946"),
+                    labels = c("FALSE" = "Not as extreme", "TRUE" = "As extreme or more"),
+                    name   = "Relative to observed") +
+  geom_vline(xintercept =  obs_cov, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
+  geom_vline(xintercept = -obs_cov, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
   annotate("text", x = obs_cov, y = Inf,
-           label = sprintf(" obs = %.2e", obs_cov),
-           vjust = 2, hjust = -0.05, colour = "red", size = 3.8) +
-  labs(title   = sprintf("Permutation Distribution of Covariance  (p = %.4f)", p_val_cov),
-       subtitle = "Red dashed lines mark ± observed covariance",
+           label = sprintf("  obs = %.2e", obs_cov),
+           vjust = 2, hjust = -0.05, colour = "darkred", size = 3.8, fontface = "bold") +
+  labs(title    = sprintf("Permutation Distribution of Covariance  (p = %.4f)", p_val_cov),
+       subtitle = "Red bars = permuted values at least as extreme as observed (two-sided); dashed lines = ± observed",
        x = "Covariance (permuted)", y = "Count") +
-  theme_minimal(base_size = 12)
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
 ```
 
 ```{r cov-result}
@@ -197,7 +214,9 @@ cat(sprintf("Decision (alpha=0.05): %s\n",
 
 ### Interpretation
 
-The observed covariance (`r round(obs_cov, 6)`) lies far in the tail of the permutation distribution — the p-value is **`r round(p_val_cov, 4)`**, which is `r ifelse(p_val_cov < 0.05, "below", "above")` the significance level of 0.05. We therefore **`r ifelse(p_val_cov < 0.05, "reject H₀", "fail to reject H₀")`**. `r if(p_val_cov < 0.05) "There is strong statistical evidence that AAPL and MSFT returns are positively linearly associated. This is economically plausible: both are large-cap US tech stocks driven by many of the same macro factors (interest rates, risk appetite, sector rotation)." else "There is insufficient evidence to conclude that the returns are linearly dependent."`
+The observed covariance is **`r formatC(obs_cov, format="e", digits=2)`**. Under H₀ (returns are independent), permuting the time-pairing of one series should produce covariances scattered symmetrically around zero — which is exactly what the histogram shows. The proportion of permuted covariances at least as extreme as the observed one (red bars) is the p-value: **p = `r round(p_val_cov, 4)`**.
+
+Since p `r ifelse(p_val_cov < 0.05, "< 0.05, we **reject H₀**", "> 0.05, we **fail to reject H₀**")`. `r if(p_val_cov < 0.05) "In all 10,000 random reshufflings of the data, not a single permuted covariance was as large as the observed value — the observed covariance lies completely outside the permutation distribution. This is overwhelming evidence that the co-movement of AAPL and MSFT returns is not a chance artefact. Economically, both are large-cap US tech stocks exposed to the same macro drivers (interest rates, risk sentiment, sector rotation), so a positive dependence is expected." else "The observed covariance falls within the bulk of the permutation distribution, so we cannot distinguish it from what random chance would produce under independence."`
 
 ---
 
@@ -221,14 +240,24 @@ perm_var_ratio <- replicate(N_PERM, {
 })
 p_val_var <- mean(abs(log(perm_var_ratio)) >= abs(log(obs_var_ratio)))
 
-ggplot(data.frame(lr = log(perm_var_ratio)), aes(x = lr)) +
-  geom_histogram(bins = 80, fill = "#c8e6c9", colour = "white", alpha = 0.85) +
-  geom_vline(xintercept =  log(obs_var_ratio), colour = "red", linewidth = 1.3, linetype = "dashed") +
-  geom_vline(xintercept = -log(obs_var_ratio), colour = "red", linewidth = 1.3, linetype = "dashed") +
-  labs(title   = sprintf("Permutation Distribution of log(Var Ratio)  (p = %.4f)", p_val_var),
-       subtitle = "Red dashed lines mark ± observed log-ratio",
+df_perm_var <- data.frame(lr = log(perm_var_ratio))
+df_perm_var$extreme <- abs(df_perm_var$lr) >= abs(log(obs_var_ratio))
+
+ggplot(df_perm_var, aes(x = lr, fill = extreme)) +
+  geom_histogram(bins = 80, colour = "white", alpha = 0.9) +
+  scale_fill_manual(values = c("FALSE" = "#c8e6c9", "TRUE" = "#e63946"),
+                    labels = c("FALSE" = "Not as extreme", "TRUE" = "As extreme or more"),
+                    name   = "Relative to observed") +
+  geom_vline(xintercept =  log(obs_var_ratio), colour = "darkred", linewidth = 1.3, linetype = "dashed") +
+  geom_vline(xintercept = -log(obs_var_ratio), colour = "darkred", linewidth = 1.3, linetype = "dashed") +
+  annotate("text", x = log(obs_var_ratio), y = Inf,
+           label = sprintf("  obs = %.3f", log(obs_var_ratio)),
+           vjust = 2, hjust = -0.05, colour = "darkred", size = 3.8, fontface = "bold") +
+  labs(title    = sprintf("Permutation Distribution of log(Var Ratio)  (p = %.4f)", p_val_var),
+       subtitle = "Red bars = permuted values at least as extreme as observed (two-sided); dashed lines = ± observed",
        x = "log(var_AAPL / var_MSFT) — permuted", y = "Count") +
-  theme_minimal(base_size = 12)
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
 ```
 
 ```{r var-result}
@@ -242,7 +271,9 @@ cat(sprintf("Decision (alpha=0.05): %s\n",
 
 ### Interpretation
 
-The variance ratio is **`r round(obs_var_ratio, 4)`**, meaning AAPL daily returns are `r ifelse(obs_var_ratio > 1, "more", "less")` volatile than MSFT. The permutation p-value is **`r round(p_val_var, 4)`**. Since this is `r ifelse(p_val_var < 0.05, "below", "above")` 0.05, we **`r ifelse(p_val_var < 0.05, "reject H₀ — the two stocks have statistically different volatilities. This has direct implications for portfolio weighting: a risk-parity strategy would allocate fewer dollars to the higher-volatility stock.", "fail to reject H₀ — we cannot distinguish the two volatilities statistically over this sample period.")`**
+The observed variance ratio is **`r round(obs_var_ratio, 4)`** (log-ratio: `r round(log(obs_var_ratio), 4)`), meaning AAPL daily returns are `r ifelse(obs_var_ratio > 1, "more", "less")` volatile than MSFT by a factor of `r round(max(obs_var_ratio, 1/obs_var_ratio), 4)`. Under H₀ the two series have equal variance, so randomly pooling all observations and splitting them back into two groups of equal size should produce a log-ratio close to zero. The red bars in the histogram show how often random splits yielded a log-ratio at least as large in absolute value as the one we observed.
+
+The permutation p-value is **p = `r round(p_val_var, 4)`**. `r ifelse(p_val_var < 0.05, "Since p < 0.05, we **reject H₀** — the difference in volatility between the two stocks is statistically significant and is unlikely to have arisen by chance. In practical terms, AAPL carries more daily return risk than MSFT over this period.", "Since p > 0.05, we **fail to reject H₀** — the data do not provide sufficient evidence to distinguish the two volatilities. We cannot rule out that the observed ratio is due to random variation.")`
 
 ---
 
@@ -266,14 +297,24 @@ perm_diff_mean <- replicate(N_PERM, {
 })
 p_val_mean <- mean(abs(perm_diff_mean) >= abs(obs_diff_mean))
 
-ggplot(data.frame(dm = perm_diff_mean), aes(x = dm)) +
-  geom_histogram(bins = 80, fill = "#ffe0b2", colour = "white", alpha = 0.85) +
-  geom_vline(xintercept =  obs_diff_mean, colour = "red", linewidth = 1.3, linetype = "dashed") +
-  geom_vline(xintercept = -obs_diff_mean, colour = "red", linewidth = 1.3, linetype = "dashed") +
-  labs(title   = sprintf("Permutation Distribution of Mean Difference  (p = %.4f)", p_val_mean),
-       subtitle = "Red dashed lines mark ± observed difference",
+df_perm_mean <- data.frame(dm = perm_diff_mean)
+df_perm_mean$extreme <- abs(df_perm_mean$dm) >= abs(obs_diff_mean)
+
+ggplot(df_perm_mean, aes(x = dm, fill = extreme)) +
+  geom_histogram(bins = 80, colour = "white", alpha = 0.9) +
+  scale_fill_manual(values = c("FALSE" = "#ffe0b2", "TRUE" = "#e63946"),
+                    labels = c("FALSE" = "Not as extreme", "TRUE" = "As extreme or more"),
+                    name   = "Relative to observed") +
+  geom_vline(xintercept =  obs_diff_mean, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
+  geom_vline(xintercept = -obs_diff_mean, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
+  annotate("text", x = obs_diff_mean, y = Inf,
+           label = sprintf("  obs = %.2e", obs_diff_mean),
+           vjust = 2, hjust = -0.05, colour = "darkred", size = 3.8, fontface = "bold") +
+  labs(title    = sprintf("Permutation Distribution of Mean Difference  (p = %.4f)", p_val_mean),
+       subtitle = "Red bars = permuted values at least as extreme as observed (two-sided); dashed lines = ± observed",
        x = "Mean(AAPL) − Mean(MSFT) — permuted", y = "Count") +
-  theme_minimal(base_size = 12)
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
 ```
 
 ```{r mean-result}
@@ -293,7 +334,9 @@ cat(sprintf("Welch t-test p-value (classical):  %.4f\n", tt$p.value))
 
 ### Interpretation
 
-The difference in sample means is **`r formatC(obs_diff_mean, format="e", digits=2)`** per day. The permutation p-value is **`r round(p_val_mean, 4)`** `r if(!is.null(tt)) sprintf("(Welch t-test: p = %.4f)", tt$p.value)`. `r ifelse(p_val_mean < 0.05, "We reject H₀ at the 5% level — the two stocks exhibit significantly different mean daily returns over this period. Note, however, that even a statistically significant difference in daily means is economically very small in absolute terms and would be difficult to exploit after transaction costs.", "We fail to reject H₀ — the difference in average daily returns is not statistically distinguishable from zero. This is a common finding for large-cap stocks over horizons of a few years: mean return estimation is notoriously noisy.")`
+The difference in sample means is **`r formatC(obs_diff_mean, format="e", digits=2)`** per day (`r round(obs_diff_mean * 252 * 100, 2)`% annualised). Under H₀, pooling both return series and randomly splitting them should produce differences scattered around zero — which the bell-shaped permutation distribution confirms. The permutation p-value is **p = `r round(p_val_mean, 4)`** (Welch t-test: p = `r if(!is.null(tt)) round(tt$p.value, 4)`; the two approaches agree closely).
+
+`r ifelse(p_val_mean < 0.05, "Since p < 0.05, we **reject H₀** — the mean daily returns differ significantly. However, note that statistical significance here does not imply economic significance: the difference is tiny in absolute terms and would be overwhelmed by transaction costs in practice.", "Since p > 0.05, we **fail to reject H₀** — the observed difference in mean returns is consistent with random variation. This is the typical result for large-cap stocks over horizons of a few years: daily mean returns are estimated with very high variance, making the test low-powered.")`
 
 ---
 
@@ -368,7 +411,7 @@ kable(port_summary, caption = "Descriptive Statistics — Portfolio Profit") |>
 
 ## 4.2 Profit Distribution vs Normal
 
-```{r profit-histogram, fig.height=5}
+```{r profit-histogram, fig.height=7}
 mu_port  <- mean(profit_portfolio)
 sd_port  <- sd(profit_portfolio)
 x_seq    <- seq(min(profit_portfolio) - 500, max(profit_portfolio) + 500, length.out = 600)
@@ -380,27 +423,58 @@ alpha_levels <- c(0.05, 0.01, 0.001)
 var_emp  <- quantile(profit_portfolio, probs = alpha_levels)
 var_norm <- qnorm(alpha_levels, mean = mu_port, sd = sd_port)
 
-var_lines <- data.frame(
-  x     = c(var_emp, var_norm),
-  type  = rep(c("Empirical VaR","Normal VaR"), each = 3),
-  level = rep(c("5%","1%","0.1%"), 2)
+# --- Panel 1: Empirical VaR ---
+# Each VaR level gets its own distinct colour from a colourblind-friendly palette.
+emp_lines <- data.frame(
+  x     = var_emp,
+  level = factor(c("5%", "1%", "0.1%"), levels = c("5%", "1%", "0.1%"))
 )
 
-ggplot(data.frame(profit = profit_portfolio), aes(x = profit)) +
+p1 <- ggplot(data.frame(profit = profit_portfolio), aes(x = profit)) +
   geom_histogram(aes(y = after_stat(density)), binwidth = bw,
-                 fill = "#ffcc99", colour = "white", alpha = 0.85) +
+                 fill = "#ffcc99", colour = "white", alpha = 0.9) +
   geom_line(data = df_norm, aes(x = x, y = y),
-            colour = "darkblue", linewidth = 1.3) +
-  geom_vline(data = subset(var_lines, type == "Empirical VaR"),
-             aes(xintercept = x, colour = level), linewidth = 1.1, linetype = "solid") +
-  geom_vline(data = subset(var_lines, type == "Normal VaR"),
-             aes(xintercept = x, colour = level), linewidth = 1.1, linetype = "dashed") +
-  scale_colour_manual(values = c("5%" = "#e63946", "1%" = "#c1121f", "0.1%" = "#6a040f")) +
-  labs(title    = "Histogram of Portfolio Profit vs Fitted Normal Distribution",
-       subtitle = sprintf("N(μ = %.1f, σ = %.1f)  |  Solid = empirical VaR, Dashed = normal VaR",
-                          mu_port, sd_port),
-       x = "Profit (USD)", y = "Density", colour = "VaR Level") +
-  theme_minimal(base_size = 12)
+            colour = "darkblue", linewidth = 1.2, linetype = "solid") +
+  geom_vline(data = emp_lines, aes(xintercept = x, colour = level),
+             linewidth = 1.2) +
+  geom_label(data = emp_lines,
+             aes(x = x, y = Inf, label = paste0("VaR\n", level), colour = level),
+             vjust = 1.3, size = 3.2, fill = "white", label.size = 0, show.legend = FALSE) +
+  scale_colour_manual(values = c("5%" = "#2166ac", "1%" = "#d6604d", "0.1%" = "#762a83"),
+                      name = "Empirical VaR") +
+  labs(title    = "Panel A — Empirical VaR",
+       subtitle = sprintf("Solid blue = fitted N(μ=%.0f, σ=%.0f)", mu_port, sd_port),
+       x = "Profit (USD)", y = "Density") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
+
+# --- Panel 2: Empirical vs Normal VaR comparison ---
+# Pair each level's empirical and normal VaR side by side using different linetypes.
+both_lines <- data.frame(
+  x      = c(var_emp, var_norm),
+  level  = rep(factor(c("5%", "1%", "0.1%"), levels = c("5%", "1%", "0.1%")), 2),
+  method = rep(c("Empirical", "Normal"), each = 3)
+)
+
+p2 <- ggplot(data.frame(profit = profit_portfolio), aes(x = profit)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = bw,
+                 fill = "#ffcc99", colour = "white", alpha = 0.9) +
+  geom_line(data = df_norm, aes(x = x, y = y),
+            colour = "darkblue", linewidth = 1.2) +
+  geom_vline(data = both_lines,
+             aes(xintercept = x, colour = level, linetype = method),
+             linewidth = 1.1) +
+  scale_colour_manual(values = c("5%" = "#2166ac", "1%" = "#d6604d", "0.1%" = "#762a83"),
+                      name = "VaR level") +
+  scale_linetype_manual(values = c("Empirical" = "solid", "Normal" = "dashed"),
+                        name = "Method") +
+  labs(title    = "Panel B — Empirical vs Normal VaR",
+       subtitle = "Solid = empirical quantile, Dashed = normal quantile; colour = level",
+       x = "Profit (USD)", y = "Density") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
+
+grid.arrange(p1, p2, nrow = 2)
 ```
 
 ### Shapiro–Wilk Normality Test
@@ -422,16 +496,20 @@ cat(sprintf("Decision (alpha=0.05): %s\n",
 ### Q–Q Plot
 
 ```{r qqplot, fig.height=4.5}
-qq_df <- data.frame(
-  theoretical = qnorm(ppoints(n_port), mean = mu_port, sd = sd_port),
-  empirical   = sort(profit_portfolio)
-)
-
-ggplot(qq_df, aes(x = theoretical, y = empirical)) +
-  geom_point(alpha = 0.35, size = 0.8, colour = "#555") +
-  geom_abline(slope = 1, intercept = 0, colour = "red", linewidth = 1.2) +
-  labs(title   = "Q–Q Plot: Portfolio Profit vs Normal Distribution",
-       subtitle = "Points on the red line indicate perfect normality",
+# The grey band is a 95% pointwise confidence envelope for the normal Q-Q plot.
+# Points inside the band are consistent with normality; points outside indicate departures.
+ggplot(data.frame(profit = profit_portfolio), aes(sample = profit)) +
+  stat_qq_band(distribution = "norm",
+               dparams = list(mean = mu_port, sd = sd_port),
+               fill = "#b0c4de", alpha = 0.4) +
+  stat_qq_line(distribution = "norm",
+               dparams = list(mean = mu_port, sd = sd_port),
+               colour = "red", linewidth = 1.1) +
+  stat_qq_point(distribution = "norm",
+                dparams = list(mean = mu_port, sd = sd_port),
+                alpha = 0.3, size = 0.9, colour = "#333333") +
+  labs(title    = "Q–Q Plot: Portfolio Profit vs Normal Distribution",
+       subtitle = "Grey band = 95% pointwise confidence envelope; points outside → departure from normality",
        x = "Theoretical Normal Quantiles (USD)", y = "Empirical Quantiles (USD)") +
   theme_minimal(base_size = 12)
 ```
@@ -477,9 +555,16 @@ var_comp$level <- factor(var_comp$level, levels = c("5%","1%","0.1%"))
 
 ggplot(var_comp, aes(x = level, y = value, fill = method)) +
   geom_col(position = "dodge", width = 0.6) +
+  geom_text(aes(label = sprintf("$%.0f", value),
+                vjust = ifelse(value < 0, 1.4, -0.4)),
+            position = position_dodge(width = 0.6), size = 3.2) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40") +
   scale_fill_manual(values = c("Empirical" = "#e63946", "Normal" = "#457b9d")) +
-  labs(title = "Empirical vs Normal VaR by Confidence Level",
+  scale_y_continuous(labels = scales::dollar_format()) +
+  annotate("text", x = 0.5, y = min(c(var_emp, var_norm)) * 0.85,
+           label = "← Loss territory", hjust = 0, size = 3.2, colour = "grey40") +
+  labs(title    = "Empirical vs Normal VaR by Confidence Level",
+       subtitle = "Negative values = losses; bars below zero are worse outcomes",
        x = "Significance Level (α)", y = "VaR (USD)", fill = "Method") +
   theme_minimal(base_size = 12)
 ```
