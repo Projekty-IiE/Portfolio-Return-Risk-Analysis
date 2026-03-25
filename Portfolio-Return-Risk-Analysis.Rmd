@@ -149,6 +149,33 @@ ggplot(df_ret, aes(x = date, y = ret, colour = ticker)) +
   theme_minimal(base_size = 12)
 ```
 
+## 2.4 Rolling Volatility
+
+Daily returns tell us about individual days, but the variance permutation test in
+Section 3 asks about *average* volatility over the entire period. The rolling volatility
+chart below shows that this average masks considerable time variation — both stocks
+went through distinct high- and low-volatility regimes. The permutation test result
+should be read in this context: it tests equality of the unconditional variance, not
+whether the two stocks have similar volatility *at every point in time*.
+
+```{r rolling-vol, fig.height=4}
+library(zoo)
+
+roll_vol <- data.frame(
+  date = ret_dates[-(1:29)],
+  AAPL = rollapply(ret_aapl, 30, sd) * sqrt(252),
+  MSFT = rollapply(ret_msft, 30, sd) * sqrt(252)
+) |> tidyr::pivot_longer(-date, names_to = "ticker", values_to = "vol")
+
+ggplot(roll_vol, aes(x = date, y = vol, colour = ticker)) +
+  geom_line(linewidth = 0.7, alpha = 0.85) +
+  scale_colour_manual(values = c("AAPL" = "#1f77b4", "MSFT" = "#d62728")) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title    = "30-day Rolling Annualised Volatility — AAPL vs MSFT",
+       subtitle = "Each point is the annualised standard deviation of the preceding 30 trading days",
+       x = "Date", y = "Volatility (annualised)", colour = "Ticker") +
+  theme_minimal(base_size = 12)
+```
 ---
 
 # 3. Permutation Tests
@@ -407,6 +434,53 @@ kable(port_summary, caption = "Descriptive Statistics — Portfolio Profit") |>
   kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
 ```
 
+The graphs below show return distribution.
+
+```{r dist-plot}
+ggplot(df_ret, aes(x = ret)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 80,
+                 fill = "#aec6cf", colour = "white") +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(df_ret$ret), sd = sd(df_ret$ret)),
+                colour = "darkred", linewidth = 1) +
+  facet_wrap(~ticker, scales = "free") +
+  labs(title = "Return distributions vs fitted Normal",
+       x = "Return (%)", y = "Density")
+```
+
+### Overlapping Windows and Effective Sample Size
+
+Although we have `r n_port` profit observations, consecutive windows share 99 out of
+100 days of price data — window $t$ and window $t+1$ differ only in that one day is
+dropped at the start and one is added at the end. This induces autocorrelation in the
+profit series that persists for approximately `r HORIZON` lags. The **effective sample
+size** — the number of approximately independent observations — is closer to
+`r round(n_port / HORIZON)` (one per non-overlapping horizon).
+
+Switching to non-overlapping
+windows would reduce $n$ to ~`r round(n_port / HORIZON)`, making tail quantiles
+undefined and the histogram uninformative, hence we retain the overlapping design.
+
+```{r acf-plot, fig.height=3.5}
+acf_vals <- acf(profit_portfolio, lag.max = 150, plot = FALSE)
+
+ggplot(data.frame(lag  = 1:150,
+                  acf  = as.numeric(acf_vals$acf[-1])),
+       aes(x = lag, y = acf)) +
+  geom_col(width = 0.5, fill = "#457b9d") +
+  geom_hline(yintercept =  1.96 / sqrt(n_port),
+             linetype = "dashed", colour = "red", linewidth = 0.7) +
+  geom_hline(yintercept = -1.96 / sqrt(n_port),
+             linetype = "dashed", colour = "red", linewidth = 0.7) +
+  geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
+  annotate("text", x = 130, y = 1.96 / sqrt(n_port) + 0.03,
+           label = "95% significance band", colour = "red", size = 3.2) +
+  labs(title    = "Autocorrelation of Portfolio Profits",
+       subtitle = paste0("ACF stays elevated until lag ~", HORIZON,
+                         " — reflecting the 100-day overlap between consecutive windows"),
+       x = "Lag (trading days)", y = "Autocorrelation") +
+  theme_minimal(base_size = 12)
+```
 ---
 
 ## 4.2 Profit Distribution vs Normal
@@ -475,6 +549,19 @@ p2 <- ggplot(data.frame(profit = profit_portfolio), aes(x = profit)) +
   theme(legend.position = "top")
 
 grid.arrange(p1, p2, nrow = 2)
+# Empirical ES
+es_emp <- sapply(alpha_levels, function(a) {
+  threshold <- quantile(profit_portfolio, probs = a)
+  mean(profit_portfolio[profit_portfolio <= threshold])
+})
+
+# Normal ES
+# For a normal distribution: ES_alpha = mu - sigma * phi(z_alpha) / alpha
+# where phi is the standard normal PDF and z_alpha is the standard normal quantile
+es_norm <- sapply(alpha_levels, function(a) {
+  z <- qnorm(a)
+  mu_port - sd_port * dnorm(z) / a
+})
 ```
 
 ### Shapiro–Wilk Normality Test
@@ -531,17 +618,21 @@ A *negative* VaR denotes a loss. We compute two variants:
 - **Empirical VaR:** the empirical $\alpha$-quantile of observed profits.  
 - **Normal VaR:** the $\alpha$-quantile of $\mathcal{N}(\hat\mu, \hat\sigma^2)$ fitted to the data.
 
-```{r var-table}
-var_df <- data.frame(
-  Level         = c("5%", "1%", "0.1%"),
+```{r var-es-table}
+
+var_es_df <- data.frame(
+  Level        = c("5%", "1%", "0.1%"),
   Empirical_VaR = round(var_emp, 2),
   Normal_VaR    = round(var_norm, 2),
-  Difference    = round(var_emp - var_norm, 2)
+  Difference    = round(var_emp - var_norm, 2),
+  Empirical_ES  = round(es_emp, 2),
+  Normal_ES     = round(es_norm, 2)
 )
 
-kable(var_df, caption = "Value at Risk — Empirical vs Normal (USD)",
+kable(var_es_df, caption = "Value at Risk — Empirical vs Normal (USD)",
       col.names = c("Confidence Level", "Empirical VaR (USD)",
-                    "Normal VaR (USD)", "Difference (Emp − Norm)")) |>
+                    "Normal VaR (USD)", "Difference (Emp − Norm)", 
+                    "Empirical ES (USD)", "Normal ES (USD)")) |>
   kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE)
 ```
 
