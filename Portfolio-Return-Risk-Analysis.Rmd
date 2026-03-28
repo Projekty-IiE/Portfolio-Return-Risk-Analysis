@@ -29,11 +29,11 @@ set.seed(42)
 
 # 1. Introduction
 
-This report analyses daily stock prices of **Apple Inc. (AAPL)** and **Microsoft Corp. (MSFT)** over the period **2021–2024** (approximately 4 years of trading data). The study covers:
+This report analyses daily stock prices of **Apple Inc. (AAPL)** and **Microsoft Corp. (MSFT)** over the period **2021–2024** (approximately 4 years of trading data). The project covers:
 
 1. Data download and computation of logarithmic daily returns.
 2. Permutation-based hypothesis tests on covariance, variance equality, and equality of expected returns.
-3. Portfolio profit analysis: buying 100 shares of each stock and selling 100 trading days later.
+3. Portfolio profit analysis: buying 100 shares of each stock and selling them 100 days later.
 4. Comparison of the empirical profit distribution with a fitted normal distribution.
 5. Empirical and parametric (normal) **Value at Risk (VaR)** at the 5%, 1%, and 0.1% levels.
 
@@ -45,7 +45,7 @@ This report analyses daily stock prices of **Apple Inc. (AAPL)** and **Microsoft
 
 ```{r packages-data}
 # Install missing packages automatically
-required_packages <- c("quantmod", "ggplot2", "gridExtra", "moments", "knitr", "kableExtra", "qqplotr", "scales")
+required_packages <- c("quantmod", "ggplot2", "gridExtra", "moments", "knitr", "kableExtra", "qqplotr", "scales", "zoo", "tidyr")
 for (pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE))
     install.packages(pkg, repos = "https://cloud.r-project.org")
@@ -180,7 +180,7 @@ ggplot(roll_vol, aes(x = date, y = vol, colour = ticker)) +
 
 # 3. Permutation Tests
 
-Permutation (randomisation) tests are **non-parametric** inference procedures. They require no distributional assumptions. The key idea is:
+Permutation tests are **non-parametric** inference procedures. They require no distributional assumptions. The key idea is:
 
 > Under the null hypothesis the observed test statistic should be no more extreme than what we would expect by **random reassignment** of the data.
 
@@ -260,11 +260,21 @@ $$H_1: \sigma^2_{\text{AAPL}} \neq \sigma^2_{\text{MSFT}} \quad \text{(different
 We use the **log-ratio** of sample variances (rather than the raw ratio) because it is symmetric under $H_0$ and has a more stable permutation distribution. Under $H_0$, pooling both samples and randomly splitting them into two equal groups should produce a ratio close to 1 (i.e., log-ratio close to 0).
 
 ```{r perm-var, fig.height=4}
+
+# mean centering so that we test only variances
+ret_aapl_c <- ret_aapl - mean(ret_aapl)
+ret_msft_c <- ret_msft - mean(ret_msft)
+
 obs_var_ratio  <- var(ret_aapl) / var(ret_msft)
+
+
 perm_var_ratio <- replicate(N_PERM, {
-  perm <- sample(combined)
-  var(perm[1:n]) / var(perm[(n+1):(2*n)])
+  swap       <- sample(c(-1, 1), n, replace = TRUE)
+  ret_a_perm <- ifelse(swap == 1, ret_aapl_c, ret_msft_c)
+  ret_b_perm <- ifelse(swap == 1, ret_msft_c, ret_aapl_c)
+  var(ret_a_perm) / var(ret_b_perm)
 })
+
 p_val_var <- mean(abs(log(perm_var_ratio)) >= abs(log(obs_var_ratio)))
 
 df_perm_var <- data.frame(lr = log(perm_var_ratio))
@@ -318,10 +328,15 @@ Under $H_0$ the label "AAPL" vs "MSFT" is exchangeable; randomly reassigning obs
 
 ```{r perm-mean, fig.height=4}
 obs_diff_mean  <- mean(ret_aapl) - mean(ret_msft)
+
+# analogously to mean-centering, now we divide by sd to be able to compare means
+diffs <- ret_aapl/sd(ret_aapl) - ret_msft/sd(ret_msft)
+
 perm_diff_mean <- replicate(N_PERM, {
-  perm <- sample(combined)
-  mean(perm[1:n]) - mean(perm[(n+1):(2*n)])
+  signs <- sample(c(-1, 1), n, replace = TRUE)
+  mean(signs * diffs)
 })
+
 p_val_mean <- mean(abs(perm_diff_mean) >= abs(obs_diff_mean))
 
 df_perm_mean <- data.frame(dm = perm_diff_mean)
@@ -402,7 +417,7 @@ For every trading day $t$ we **buy 100 shares of each stock** at the closing pri
 
 $$\Pi_t = 100 \cdot (P^{\text{AAPL}}_{t+100} - P^{\text{AAPL}}_t) + 100 \cdot (P^{\text{MSFT}}_{t+100} - P^{\text{MSFT}}_t)$$
 
-Transaction costs are ignored. The result is a time series of overlapping 100-day holding-period profits.
+Transaction costs are ignored. The result is a time series of overlapping 100-day holding-period profits. Since we are working on dependent observations (each window shares 99 days with its'neighbours), the descriptive statistics shown below should not be interpreted as if they came from an independent sample.
 
 ```{r portfolio}
 N_SHARES  <- 100
@@ -453,13 +468,9 @@ ggplot(df_ret, aes(x = ret)) +
 Although we have `r n_port` profit observations, consecutive windows share 99 out of
 100 days of price data — window $t$ and window $t+1$ differ only in that one day is
 dropped at the start and one is added at the end. This induces autocorrelation in the
-profit series that persists for approximately `r HORIZON` lags. The **effective sample
-size** — the number of approximately independent observations — is closer to
-`r round(n_port / HORIZON)` (one per non-overlapping horizon).
+profit series that persists for approximately `r HORIZON` lags. The number of approximately independent observations is closer to `r round(n_port / HORIZON)` (one per non-overlapping horizon).
 
-Switching to non-overlapping
-windows would reduce $n$ to ~`r round(n_port / HORIZON)`, making tail quantiles
-undefined and the histogram uninformative, hence we retain the overlapping design.
+Switching to non-overlapping windows would reduce $n$ to ~`r round(n_port / HORIZON)`, making tail quantiles undefined and the histogram uninformative, hence we retain the overlapping design.
 
 ```{r acf-plot, fig.height=3.5}
 acf_vals <- acf(profit_portfolio, lag.max = 150, plot = FALSE)
@@ -574,7 +585,15 @@ $$H_0: \text{Portfolio profit is normally distributed}$$
 $$H_1: \text{Portfolio profit is NOT normally distributed}$$
 
 ```{r shapiro}
-sw <- shapiro.test(sample(profit_portfolio, min(5000, n_port)))
+
+# we use only every 100th observation — these are approximately independent
+non_overlap_idx <- seq(1, n_port, by = HORIZON)
+profit_indep    <- profit_portfolio[non_overlap_idx]
+
+cat(sprintf("Non-overlapping windows: %d\n", length(profit_indep)))
+
+sw <- shapiro.test(profit_indep)
+
 cat(sprintf("Shapiro–Wilk test: W = %.5f,  p-value = %.4e\n", sw$statistic, sw$p.value))
 cat(sprintf("Decision (alpha=0.05): %s\n",
             ifelse(sw$p.value < 0.05, "REJECT H0 — non-normal", "FAIL TO REJECT H0 — consistent with normal")))
@@ -607,7 +626,7 @@ ggplot(data.frame(profit = profit_portfolio), aes(sample = profit)) +
 
 ---
 
-# 5. Value at Risk (VaR)
+# 5. Value at Risk (VaR) and Expected Shortfall (ES)
 
 **Value at Risk at level $\alpha$** is the threshold loss such that the probability of the portfolio return falling *below* it is $\alpha$:
 
@@ -617,6 +636,10 @@ A *negative* VaR denotes a loss. We compute two variants:
 
 - **Empirical VaR:** the empirical $\alpha$-quantile of observed profits.  
 - **Normal VaR:** the $\alpha$-quantile of $\mathcal{N}(\hat\mu, \hat\sigma^2)$ fitted to the data.
+
+**Expected Shortfall (ES) at level $\alpha$** — also called Conditional VaR — is the average loss in the worst $\alpha$% of scenarios: 
+$$ES_\alpha = E[\Pi \mid \Pi \leq \text{VaR}_\alpha]$$
+It is reported alongside VaR as it better captures the severity of tail losses, not just their threshold.
 
 ```{r var-es-table}
 
