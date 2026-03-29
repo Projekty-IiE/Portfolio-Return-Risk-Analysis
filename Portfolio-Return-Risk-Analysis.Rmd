@@ -1,7 +1,7 @@
 ---
-title: "Stock Return Analysis: Permutation Tests & Portfolio Value at Risk"
+title: "Analiza zwrotu z akcji"
 subtitle: "Apple Inc. (AAPL) vs Microsoft Corp. (MSFT) — 2021–2024"
-author: "Statistical Finance Report"
+author: "Metody replikacyjne w analizie danych"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -27,24 +27,25 @@ set.seed(42)
 
 ---
 
-# 1. Introduction
+# 1. Wprowadzenie do projektu
 
-This report analyses daily stock prices of **Apple Inc. (AAPL)** and **Microsoft Corp. (MSFT)** over the period **2021–2024** (approximately 4 years of trading data). The project covers:
+W naszej pracy przeanalizujemy dzienne ceny akcji dwóch gigantów technologicznych: **Apple Inc. (AAPL)** i **Microsoft Corp. (MSFT)**, w okresie od **2021 do 2024 roku**. Celem jest zbadanie ich zwrotów, ryzyka oraz wzajemnych zależności, a także ocena potencjalnych zysków z prostego portfela inwestycyjnego.
 
-1. Data download and computation of logarithmic daily returns.
-2. Permutation-based hypothesis tests on covariance, variance equality, and equality of expected returns.
-3. Portfolio profit analysis: buying 100 shares of each stock and selling them 100 days later.
-4. Comparison of the empirical profit distribution with a fitted normal distribution.
-5. Empirical and parametric (normal) **Value at Risk (VaR)** at the 5%, 1%, and 0.1% levels.
+Analiza przebiegnie według następującej listy zadań:
+
+1. Pobranie danych i obliczenie dziennych logarytmicznych zwrotów.
+2. Testowanie hipotez opartych na permutacji dotyczących kowariancji, równości wariancji i równości oczekiwanych stóp zwrotu.
+3. Analiza zyskowności portfela składającego się z 100 akcji AAPL i 100 akcji MSFT, trzymanych przez 100 dni.
+4. Porównanie ze sobą rozkładu empirycznego z rozkładem normalnym.
+5. Empiryczna i normalna **Value at Risk (VaR)** na poziomach 5%, 1% i 0.1%.
 
 ---
 
-# 2. Data & Returns
+# 2. Przygotowanie danych i obliczenie zwrotów
 
-## 2.1 Packages and Data Download
+## 2.1 Pobieranie danych i niezbędnych pakietów
 
 ```{r packages-data}
-# Install missing packages automatically
 required_packages <- c("quantmod", "ggplot2", "gridExtra", "moments", "knitr", "kableExtra", "qqplotr", "scales", "zoo", "tidyr")
 for (pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE))
@@ -59,8 +60,9 @@ library(knitr)
 library(kableExtra)
 library(qqplotr)
 library(scales)
+library(zoo)
 
-# Download adjusted closing prices from Yahoo Finance
+# Pobieramy ceny zamknięcia z Yahoo Finance
 start_date <- "2021-01-01"
 end_date   <- "2024-12-31"
 
@@ -76,14 +78,14 @@ cat(sprintf("AAPL: %d observations  |  MSFT: %d observations\n",
 cat(sprintf("Date range: %s  to  %s\n", min(dates), max(dates)))
 ```
 
-> **Note:** We use **adjusted closing prices** (accounting for dividends and splits) to ensure comparability across time.
+> **Uwaga:** W projekcie używamy **skorygowanych cen zamknięcia** (uwzględniających wypłaty dywidend czy splity) aby zapewnić miarodajność w pełnym okresie analizy. Dzięki temu wygładzamy sztuczne skoki powodujące zmianę ceny akcji, ale nie wpływające na wartość portfela- to powoduje, że możemy analizować czysty zysk/stratę inwestora.
 
-## 2.2 Price Chart
+## 2.2 Wykres Cen
 
 ```{r price-chart, fig.height=4}
-# Index prices to 100 at the start date so relative performance is directly comparable.
-# Raw prices differ in level (AAPL ~$130 vs MSFT ~$220 at start), which would make
-# one series appear visually flatter even if its percentage moves are identical.
+# Ceny akcji przeskalowujemy tak, aby ich wykresy zaczynały się na poziomie 100$. Dzięki temu widzimy, jak w porównaniu do 
+# siebie zachowują się spółki- skok na 110$ oznacza wzrost o 10%. W przypadku analizowania ich naturalnych cen, wykres byłby # trudny do analizowania- na jednym skok o tyle samo procent wyglądałby płasko, a na drugim bardzo pionowo.
+
 df_prices <- data.frame(
   date         = rep(dates, 2),
   price        = c(price_aapl, price_msft),
@@ -96,19 +98,19 @@ ggplot(df_prices, aes(x = date, y = price_indexed, colour = ticker)) +
   geom_line(linewidth = 0.8) +
   geom_hline(yintercept = 100, linetype = "dotted", colour = "grey50") +
   scale_colour_manual(values = c("AAPL" = "#1f77b4", "MSFT" = "#d62728")) +
-  labs(title    = "Relative Performance: AAPL vs MSFT (2021–2024)",
-       subtitle = "Both series indexed to 100 at 2021-01-04 — shows percentage growth, not price level",
-       x = "Date", y = "Indexed Price (start = 100)", colour = "Ticker") +
+  labs(title    = "Względny wzrost akcji: AAPL vs MSFT (2021–2024)",
+       subtitle = "Obie zmienne startują na poziomie 100$ w dniu 2021-01-04 — wykres pokazuje wzrost procentowy, nie ceny",
+       x = "Data", y = "Przeskalowana cena (start = 100)", colour = "Ticker") +
   theme_minimal(base_size = 12)
 ```
 
-## 2.3 Logarithmic Daily Returns
+## 2.3 Dzienne stopy zwrotu w formie logarytmicznej
 
-Daily log-returns are defined as:
+Dzienne stopy zwrotu możemy wyrazić z użyciem logarytmu naturalnego jako:
 
 $$r_t = \ln\!\left(\frac{P_t}{P_{t-1}}\right)$$
 
-Log-returns are preferred over simple returns because they are **time-additive** and tend to be closer to normally distributed for short horizons.
+Zastosowanie takiej formy zapisu zamiast wyliczania stóp zwrotu i ich przez siebie wymnażania, umożliwia dodawanie wyników do siebie -jeśli suma logarytmicznych stóp zwrotu z całego tygodnia wynosi 0.05, to oznacza że zarobiliśmy 5% w skali tygodnia (nie musimy analizować poszczególnych etapów). To zastosowanie sprawia także, że wykres przyjmuje kształt bliższy rozkładowi normalnegmu niż w przypadku zwykłych stóp procentowych (wynika to z ich przedziałów wartośći), co ułatwi późniejsze modelowanie ryzyka.
 
 ```{r returns}
 ret_aapl  <- diff(log(price_aapl))
@@ -116,7 +118,7 @@ ret_msft  <- diff(log(price_msft))
 ret_dates <- dates[-1]
 n         <- length(ret_aapl)
 
-# Summary table
+# Tabela podsumowująca 
 summary_df <- data.frame(
   Ticker = c("AAPL", "MSFT"),
   N      = c(n, n),
@@ -129,8 +131,8 @@ summary_df <- data.frame(
 )
 
 kable(summary_df, digits = 6,
-      caption = "Descriptive Statistics of Daily Log-Returns",
-      col.names = c("Ticker","N","Mean","Std Dev","Min","Max","Skewness","Ex. Kurtosis")) |>
+      caption = "Statystyki opisowe zwrotów logarytmicznych",
+      col.names = c("Ticker", "N", "Średnia", "Odchylenie standardowe", "Min", "Maks", "Skośność", "Kurtoza")) |>
   kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE)
 ```
 
@@ -144,22 +146,18 @@ df_ret <- data.frame(
 ggplot(df_ret, aes(x = date, y = ret, colour = ticker)) +
   geom_line(alpha = 0.55, linewidth = 0.4) +
   scale_colour_manual(values = c("AAPL" = "#1f77b4", "MSFT" = "#d62728")) +
-  labs(title  = "Daily Log-Returns (%) — AAPL and MSFT",
-       x = "Date", y = "Return (%)", colour = "Ticker") +
+  labs(title  = "Dzienne zwroty logarytmiczne (%) — AAPL i MSFT",
+       x = "Data", y = "Zwrot (%)", colour = "Ticker") +
   theme_minimal(base_size = 12)
 ```
 
-## 2.4 Rolling Volatility
+## 2.4 Zmienność krocząca (Rolling Volatility)
 
-Daily returns tell us about individual days, but the variance permutation test in
-Section 3 asks about *average* volatility over the entire period. The rolling volatility
-chart below shows that this average masks considerable time variation — both stocks
-went through distinct high- and low-volatility regimes. The permutation test result
-should be read in this context: it tests equality of the unconditional variance, not
-whether the two stocks have similar volatility *at every point in time*.
+Dzienne stopy zwrotu mówią nam o tym, co działo się w konkretne dni, natomiast test wariancji w sekcji 3 bada średnią zmienność dla całego badanego okresu. Wykres zmienności kroczącej poniżej pokazuje jednak, że ta średnia ukrywa istotne zmiany zachodzące w czasie – obie spółki przechodziły przez różne "fazy": od okresów spokoju po momenty bardzo wysokiego ryzyka.
+
+Wynik testu permutacyjnego należy więc interpretować ostrożnie: sprawdza on ogólną (bezwarunkową) równość wariancji, a nie to, czy obie spółki miały identyczny poziom ryzyka w każdym momencie trwania analizy.
 
 ```{r rolling-vol, fig.height=4}
-library(zoo)
 
 roll_vol <- data.frame(
   date = ret_dates[-(1:29)],
@@ -171,97 +169,96 @@ ggplot(roll_vol, aes(x = date, y = vol, colour = ticker)) +
   geom_line(linewidth = 0.7, alpha = 0.85) +
   scale_colour_manual(values = c("AAPL" = "#1f77b4", "MSFT" = "#d62728")) +
   scale_y_continuous(labels = scales::percent_format()) +
-  labs(title    = "30-day Rolling Annualised Volatility — AAPL vs MSFT",
-       subtitle = "Each point is the annualised standard deviation of the preceding 30 trading days",
-       x = "Date", y = "Volatility (annualised)", colour = "Ticker") +
+  labs(title    = "30 dniowa zmienność krocząca — AAPL vs MSFT",
+       subtitle="Wykres pokazuje ryzyko (zmienność) obliczane w okienkach 30-dniowych, przeliczone na skalę roczną",
+       x = "Data", y = "Zmienność", colour = "Ticker") +
   theme_minimal(base_size = 12)
 ```
 ---
 
-# 3. Permutation Tests
+# 3. Testy Permutacyjne
 
-Permutation tests are **non-parametric** inference procedures. They require no distributional assumptions. The key idea is:
+Są to metody **nieparametryczne**.Oznacza to, że nie musimy przyjmować żadnego konkretnego rozkładu za punkt odniesienia. The key idea is:
 
-> Under the null hypothesis the observed test statistic should be no more extreme than what we would expect by **random reassignment** of the data.
+> Główna idea jest następująca:
+Jeśli nasze dwie spółki faktycznie niczym się od siebie nie różnią (hipoteza zerowa), to gdybyśmy losowo "wymieszali" ich stopy zwrotu między sobą, wynik nie powinien być bardziej ekstremalny niż ten, który zaobserwowaliśmy w rzeczywistości.
 
-We use **N = 10,000 permutations** for all tests. All p-values are two-sided.
+Uzywamy **N = 10,000 permutacji** dla każdego z testów, a wszystkie p-value liczymy jako dwustronne.
 
 ```{r perm-setup}
 N_PERM   <- 10000
-combined <- c(ret_aapl, ret_msft)   # pooled sample (used in tests 3b and 3c)
+combined <- c(ret_aapl, ret_msft)   # próbka testowa
 ```
 
 ---
 
-## 3.1 Test of Covariance Significance
+## 3.1 Test istotności kowariancji
 
-### Hypotheses
+### Hipotezy
 
-$$H_0: \text{Cov}(r_{\text{AAPL}},\, r_{\text{MSFT}}) = 0 \quad \text{(returns are linearly independent)}$$
+$$H_0: \text{Cov}(r_{\text{AAPL}},\, r_{\text{MSFT}}) = 0 \quad \text{stopy zwrotu spółek są od siebie niezależne (brak powiązania liniowego).}$$
 
-$$H_1: \text{Cov}(r_{\text{AAPL}},\, r_{\text{MSFT}}) \neq 0 \quad \text{(returns are linearly associated)}$$
+$$H_1: \text{Cov}(r_{\text{AAPL}},\, r_{\text{MSFT}}) \neq 0 \quad \text{stopy zwrotu są ze sobą powiązane.}$$
 
-**Test statistic:** $T = \widehat{\text{Cov}}(r_{\text{AAPL}},\, r_{\text{MSFT}})$
+**Statystyka testowa:** $T = \widehat{\text{Cov}}(r_{\text{AAPL}},\, r_{\text{MSFT}})$
 
-Under $H_0$ the pairing between the two series is arbitrary, so we break it by randomly permuting one series. The permutation distribution approximates the sampling distribution of the covariance under $H_0$.
+W ramach hipotezy zerowej zakładamy, że kolejność dni nie ma znaczenia dla relacji między spółkami. Aby to sprawdzić, losowo "mieszamy" (permutujemy) kolejność dni dla jednej ze spółek, niszcząc oryginalne pary dat. W ten sposób tworzymy sztuczny świat, w którym spółki na pewno są od siebie niezależne. Następnie sprawdzamy, jak często w takim "sztucznym świecie" uda nam się uzyskać kowariancję tak dużą, jak ta zaobserwowana w rzeczywistości.
 
 ```{r perm-cov, fig.height=4}
 obs_cov  <- cov(ret_aapl, ret_msft)
 perm_cov <- replicate(N_PERM, cov(sample(ret_aapl), ret_msft))
 p_val_cov <- mean(abs(perm_cov) >= abs(obs_cov))
 
-# Shade bars that are at least as extreme as the observed statistic (two-sided).
-# This makes the p-value visually intuitive: shaded area / total area = p-value.
+# Słupki w kolorze czerwonym oznaczają obserwacje równe lub silniejsze od wyniku.
+# Dzięki temu p-value to (pole zacieniowane) / (całe pole pod wykresem).
 df_perm_cov <- data.frame(cov = perm_cov)
 df_perm_cov$extreme <- abs(df_perm_cov$cov) >= abs(obs_cov)
 
 ggplot(df_perm_cov, aes(x = cov, fill = extreme)) +
   geom_histogram(bins = 80, colour = "white", alpha = 0.9) +
   scale_fill_manual(values = c("FALSE" = "#aec6cf", "TRUE" = "#e63946"),
-                    labels = c("FALSE" = "Not as extreme", "TRUE" = "As extreme or more"),
-                    name   = "Relative to observed") +
+                    labels = c("FALSE" = "Mniej ekstremalne", "TRUE" = "Przynajmniej tak samo ekstremalne"),
+                    name   = "W stosunku do rzeczywistości ") +
   geom_vline(xintercept =  obs_cov, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
   geom_vline(xintercept = -obs_cov, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
   annotate("text", x = obs_cov, y = Inf,
            label = sprintf("  obs = %.2e", obs_cov),
            vjust = 2, hjust = -0.05, colour = "darkred", size = 3.8, fontface = "bold") +
-  labs(title    = sprintf("Permutation Distribution of Covariance  (p = %.4f)", p_val_cov),
-       subtitle = "Red bars = permuted values at least as extreme as observed (two-sided); dashed lines = ± observed",
-       x = "Covariance (permuted)", y = "Count") +
+  labs(title    = sprintf("Rozkład permutacyjny kowariancji (p = %.4f)", p_val_cov),
+       subtitle = "Czerwone słupki = wyniki co najmniej tak ekstremalne jak zaobserwowany (test dwustronny); przerywane linie = ± wartość zaobserwowana",
+       x = "Kowariancja (z permutacji)", y = "Liczebność") +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
 ```
 
 ```{r cov-result}
-cat(sprintf("Observed covariance:  %.2e\n", obs_cov))
-cat(sprintf("Permutation p-value:  %.4f\n", p_val_cov))
-cat(sprintf("Decision (alpha=0.05): %s\n",
-            ifelse(p_val_cov < 0.05, "REJECT H0", "FAIL TO REJECT H0")))
+cat(sprintf("Zaobserwowana kowariancja:  %.2e\n", obs_cov))
+cat(sprintf("Wartość p-value (permutacje):  %.4f\n", p_val_cov))
+cat(sprintf("Decyzja (alfa=0.05): %s\n",
+            ifelse(p_val_cov < 0.05, "ODRZUĆ H0", "BRAK PODSTAW DO ODRZUCENIA H0")))
 ```
 
-### Interpretation
+### Interpretacja
 
-The observed covariance is **`r formatC(obs_cov, format="e", digits=2)`**. Under H₀ (returns are independent), permuting the time-pairing of one series should produce covariances scattered symmetrically around zero — which is exactly what the histogram shows. The proportion of permuted covariances at least as extreme as the observed one (red bars) is the p-value: **p = `r round(p_val_cov, 4)`**.
-
-Since p `r ifelse(p_val_cov < 0.05, "< 0.05, we **reject H₀**", "> 0.05, we **fail to reject H₀**")`. `r if(p_val_cov < 0.05) "In all 10,000 random reshufflings of the data, not a single permuted covariance was as large as the observed value — the observed covariance lies completely outside the permutation distribution. This is overwhelming evidence that the co-movement of AAPL and MSFT returns is not a chance artefact. Economically, both are large-cap US tech stocks exposed to the same macro drivers (interest rates, risk sentiment, sector rotation), so a positive dependence is expected." else "The observed covariance falls within the bulk of the permutation distribution, so we cannot distinguish it from what random chance would produce under independence."`
-
+Zaobserwowana kowariancja wynosi **`r formatC(obs_cov, format="e", digits=2)`**.Przy założeniu hipotezy zerowej (spółki są od siebie niezależne), losowe mieszanie dat powinno dawać wyniki skupione symetrycznie wokół zera — co wyraźnie widać na histogramie. Odsetek wyników z symulacji, które są co najmniej tak ekstremalne jak nasz wynik z giełdy, to właśnie wartość **p = `r round(p_val_cov, 4)`**.
+Ponieważ jest ona znacznie mniejsza od poziomu istotności 0,05, odrzucamy hipotezę zerową o niezależności spółek. Mamy bardzo silne dowody na to, że Apple i Microsoft poruszają się na giełdzie w sposób zsynchronizowany. Jest to logiczne z punktu widzenia ekonomii – obie firmy to liderzy sektora technologicznego, reagujący na te same impulsy rynkowe.
 ---
 
-## 3.2 Test of Equality of Variances
+## 3.2 Test równości wariancji
 
-### Hypotheses
+### Hipotezy
 
-$$H_0: \sigma^2_{\text{AAPL}} = \sigma^2_{\text{MSFT}} \quad \text{(equal return volatility)}$$
+$$H_0: \sigma^2_{\text{AAPL}} = \sigma^2_{\text{MSFT}} \quad \text{obie spółki charakteryzują się taką samą zmiennością}$$
 
-$$H_1: \sigma^2_{\text{AAPL}} \neq \sigma^2_{\text{MSFT}} \quad \text{(different volatilities)}$$
+$$H_1: \sigma^2_{\text{AAPL}} \neq \sigma^2_{\text{MSFT}} \quad \text{zmienności spółek istotnie się od siebie różnią.}$$
 
-**Test statistic:** $T = \ln\!\left(\hat\sigma^2_{\text{AAPL}} / \hat\sigma^2_{\text{MSFT}}\right)$
+**Statystyka testowa:** $T = \ln\!\left(\hat\sigma^2_{\text{AAPL}} / \hat\sigma^2_{\text{MSFT}}\right)$
 
-We use the **log-ratio** of sample variances (rather than the raw ratio) because it is symmetric under $H_0$ and has a more stable permutation distribution. Under $H_0$, pooling both samples and randomly splitting them into two equal groups should produce a ratio close to 1 (i.e., log-ratio close to 0).
+Wykorzystujemy logarytm stosunku wariancji, ponieważ jest on statystyką symetryczną względem zera w przypadku prawdziwości hipotezy zerowej. W teście permutacyjnym łączymy stopy zwrotu obu spółek i losowo dzielimy je na dwie nowe grupy. Jeśli w rzeczywistości ryzyko obu spółek jest podobne, to logarytm stosunku wariancji w naszych symulacjach powinien oscylować wokół zera. Sprawdzając, jak bardzo nasz realny wynik odbiega od tych symulacji, oceniamy, czy różnica w ryzyku między Apple a Microsoftem jest statystycznie istotna.
 
 ```{r perm-var, fig.height=4}
 
-# mean centering so that we test only variances
+# uznajemy średnią jako środek
 ret_aapl_c <- ret_aapl - mean(ret_aapl)
 ret_msft_c <- ret_msft - mean(ret_msft)
 
@@ -283,56 +280,55 @@ df_perm_var$extreme <- abs(df_perm_var$lr) >= abs(log(obs_var_ratio))
 ggplot(df_perm_var, aes(x = lr, fill = extreme)) +
   geom_histogram(bins = 80, colour = "white", alpha = 0.9) +
   scale_fill_manual(values = c("FALSE" = "#c8e6c9", "TRUE" = "#e63946"),
-                    labels = c("FALSE" = "Not as extreme", "TRUE" = "As extreme or more"),
-                    name   = "Relative to observed") +
+                    labels = c("FALSE" = "Nie tak ekstremalna", "TRUE" = "Przynajmniej tak samo ekstremalne"),
+                    name   = "W stosunku do rzeczywistości") +
   geom_vline(xintercept =  log(obs_var_ratio), colour = "darkred", linewidth = 1.3, linetype = "dashed") +
   geom_vline(xintercept = -log(obs_var_ratio), colour = "darkred", linewidth = 1.3, linetype = "dashed") +
   annotate("text", x = log(obs_var_ratio), y = Inf,
            label = sprintf("  obs = %.3f", log(obs_var_ratio)),
            vjust = 2, hjust = -0.05, colour = "darkred", size = 3.8, fontface = "bold") +
-  labs(title    = sprintf("Permutation Distribution of log(Var Ratio)  (p = %.4f)", p_val_var),
-       subtitle = "Red bars = permuted values at least as extreme as observed (two-sided); dashed lines = ± observed",
-       x = "log(var_AAPL / var_MSFT) — permuted", y = "Count") +
+  labs(title    = sprintf("Rozkład permutacyjny logarytmu stosunku wariancji (p = %.4f)", p_val_var),
+       subtitle = "Czerwone słupki = wyniki ekstremalne; przerywane linie = wynik z giełdy (±)",
+       x = "log(Var_AAPL / Var_MSFT) — z symulacji", y = "Liczba przypadków") +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
 ```
 
 ```{r var-result}
-cat(sprintf("Observed variance — AAPL: %.2e\n", var(ret_aapl)))
-cat(sprintf("Observed variance — MSFT: %.2e\n", var(ret_msft)))
-cat(sprintf("Variance ratio (AAPL/MSFT): %.4f\n", obs_var_ratio))
-cat(sprintf("Permutation p-value:        %.4f\n", p_val_var))
-cat(sprintf("Decision (alpha=0.05): %s\n",
-            ifelse(p_val_var < 0.05, "REJECT H0", "FAIL TO REJECT H0")))
+cat(sprintf("Zaobserwowana wariancja — AAPL: %.2e\n", var(ret_aapl)))
+cat(sprintf("Zaobserwowana wariancja — MSFT: %.2e\n", var(ret_msft)))
+cat(sprintf("Stosunek wariancji (AAPL/MSFT): %.4f\n", obs_var_ratio))
+cat(sprintf("Wartość p-value (permutacje):   %.4f\n", p_val_var))
+cat(sprintf("Decyzja (alfa=0.05): %s\n",
+            ifelse(p_val_var < 0.05, "ODRZUĆ H0", "BRAK PODSTAW DO ODRZUCENIA H0")))
 ```
 
-### Interpretation
+### Interpretacja
 
-The observed variance ratio is **`r round(obs_var_ratio, 4)`** (log-ratio: `r round(log(obs_var_ratio), 4)`), meaning AAPL daily returns are `r ifelse(obs_var_ratio > 1, "more", "less")` volatile than MSFT by a factor of `r round(max(obs_var_ratio, 1/obs_var_ratio), 4)`. Under H₀ the two series have equal variance, so randomly pooling all observations and splitting them back into two groups of equal size should produce a log-ratio close to zero. The red bars in the histogram show how often random splits yielded a log-ratio at least as large in absolute value as the one we observed.
-
-The permutation p-value is **p = `r round(p_val_var, 4)`**. `r ifelse(p_val_var < 0.05, "Since p < 0.05, we **reject H₀** — the difference in volatility between the two stocks is statistically significant and is unlikely to have arisen by chance. In practical terms, AAPL carries more daily return risk than MSFT over this period.", "Since p > 0.05, we **fail to reject H₀** — the data do not provide sufficient evidence to distinguish the two volatilities. We cannot rule out that the observed ratio is due to random variation.")`
+Z obliczeń wynika, że wariancja Apple wynosi `r formatC(var(ret_aapl), format="e", digits=2)`, a Microsoftu `r formatC(var(ret_msft), format="e", digits=2)`. Porównując te dwie wartości, otrzymujemy stosunek wariancji na poziomie `r round(obs_var_ratio, 4)`. Oznacza to, że dzienne wahania kursu Apple są o ok. 3.8% większe niż w przypadku Microsoftu.Aby sprawdzić, czy ta różnica jest istotna statystycznie, przeprowadziliśmy test permutacyjny. Uzyskana wartość p-value = `r round(p_val_var, 4)` jest znacznie wyższa od przyjętego progu 0,05. W związku z tym nie mamy podstaw do odrzucenia hipotezy zerowej ($H_0$).Wniosek: Choć liczbowo Apple wydaje się minimalnie bardziej zmienne, statystyka mówi nam, że ta różnica jest zbyt mała, by uznać ją za trwałą cechę tych spółek. W badanym okresie obie firmy charakteryzowały się niemal identycznym poziomem ryzyka (zmienności), a zaobserwowane odchylenie jest najprawdopodobniej dziełem przypadku.
 
 ---
 
-## 3.3 Test of Equality of Expected Returns
+## 3.3 Test równości oczekiwanych stóp zwrotu
 
-### Hypotheses
+### Hipotezy
 
-$$H_0: \mu_{\text{AAPL}} = \mu_{\text{MSFT}} \quad \text{(equal mean daily returns)}$$
+$$H_0: \mu_{\text{AAPL}} = \mu_{\text{MSFT}} \quad \text{(średnie dzienne zwroty są równe)}$$
 
-$$H_1: \mu_{\text{AAPL}} \neq \mu_{\text{MSFT}} \quad \text{(different mean daily returns)}$$
+$$H_1: \mu_{\text{AAPL}} \neq \mu_{\text{MSFT}} \quad \text{(średnie dzienne wzroty różnią się istotnie)}$$
 
-**Test statistic:** $T = \bar r_{\text{AAPL}} - \bar r_{\text{MSFT}}$
+**Statystyka testowa:** $T = \bar r_{\text{AAPL}} - \bar r_{\text{MSFT}}$
 
-Under $H_0$ the label "AAPL" vs "MSFT" is exchangeable; randomly reassigning observations to groups should produce differences near zero.
+W ramach $H_0$ zakładamy, że etykiety „AAPL” i „MSFT” są zamienne. Losowe przypisanie obserwacji do grup (zamiana znaków różnic) powinno generować wyniki bliskie zeru.
 
 ```{r perm-mean, fig.height=4}
 obs_diff_mean  <- mean(ret_aapl) - mean(ret_msft)
 
-# analogously to mean-centering, now we divide by sd to be able to compare means
-diffs <- ret_aapl/sd(ret_aapl) - ret_msft/sd(ret_msft)
+# POPRAWKA: Używamy surowych różnic stóp zwrotu
+diffs <- ret_aapl - ret_msft
 
 perm_diff_mean <- replicate(N_PERM, {
+  # Losujemy znaki, co symuluje zamianę spółek miejscami w losowe dni
   signs <- sample(c(-1, 1), n, replace = TRUE)
   mean(signs * diffs)
 })
@@ -345,79 +341,84 @@ df_perm_mean$extreme <- abs(df_perm_mean$dm) >= abs(obs_diff_mean)
 ggplot(df_perm_mean, aes(x = dm, fill = extreme)) +
   geom_histogram(bins = 80, colour = "white", alpha = 0.9) +
   scale_fill_manual(values = c("FALSE" = "#ffe0b2", "TRUE" = "#e63946"),
-                    labels = c("FALSE" = "Not as extreme", "TRUE" = "As extreme or more"),
-                    name   = "Relative to observed") +
+                    labels = c("FALSE" = "Typowy wynik", "TRUE" = "Wynik ekstremalny"),
+                    name   = "W stosunku do obserwacji") +
   geom_vline(xintercept =  obs_diff_mean, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
   geom_vline(xintercept = -obs_diff_mean, colour = "darkred", linewidth = 1.3, linetype = "dashed") +
   annotate("text", x = obs_diff_mean, y = Inf,
            label = sprintf("  obs = %.2e", obs_diff_mean),
            vjust = 2, hjust = -0.05, colour = "darkred", size = 3.8, fontface = "bold") +
-  labs(title    = sprintf("Permutation Distribution of Mean Difference  (p = %.4f)", p_val_mean),
-       subtitle = "Red bars = permuted values at least as extreme as observed (two-sided); dashed lines = ± observed",
-       x = "Mean(AAPL) − Mean(MSFT) — permuted", y = "Count") +
+  labs(title    = sprintf("Rozkład permutacyjny różnicy średnich (p = %.4f)", p_val_mean),
+       subtitle = "Czerwone słupki = wyniki co najmniej tak ekstremalne jak zaobserwowany (test dwustronny)",
+       x = "Różnica średnich (z symulacji)", y = "Liczba przypadków") +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
 ```
 
 ```{r mean-result}
-cat(sprintf("Mean return AAPL: %.6f  (%.4f%% daily)\n",
+cat(sprintf("Średni zwrot AAPL: %.6f (%.4f%% dziennie)\n", 
             mean(ret_aapl), mean(ret_aapl)*100))
-cat(sprintf("Mean return MSFT: %.6f  (%.4f%% daily)\n",
+cat(sprintf("Średni zwrot MSFT: %.6f (%.4f%% dziennie)\n", 
             mean(ret_msft), mean(ret_msft)*100))
-cat(sprintf("Observed difference:      %.2e\n", obs_diff_mean))
-cat(sprintf("Permutation p-value:      %.4f\n", p_val_mean))
-cat(sprintf("Decision (alpha=0.05): %s\n",
-            ifelse(p_val_mean < 0.05, "REJECT H0", "FAIL TO REJECT H0")))
+cat(sprintf("Zaobserwowana różnica:    %.2e\n", obs_diff_mean))
+cat(sprintf("Wartość p-value (permutacje): %.4f\n", p_val_mean))
+cat(sprintf("Decyzja (alfa=0.05): %s\n", 
+            ifelse(p_val_mean < 0.05, "ODRZUĆ H0", "BRAK PODSTAW DO ODRZUCENIA H0")))
 
-# Classical Welch t-test for comparison
+# Klasyczny test t-Welcha dla porównania
 tt <- t.test(ret_aapl, ret_msft)
-cat(sprintf("Welch t-test p-value (classical):  %.4f\n", tt$p.value))
+cat(sprintf("p-value testu t-Welcha: %.4f\n", tt$p.value))
 ```
 
-### Interpretation
+### Interpretacja
 
-The difference in sample means is **`r formatC(obs_diff_mean, format="e", digits=2)`** per day (`r round(obs_diff_mean * 252 * 100, 2)`% annualised). Under H₀, pooling both return series and randomly splitting them should produce differences scattered around zero — which the bell-shaped permutation distribution confirms. The permutation p-value is **p = `r round(p_val_mean, 4)`** (Welch t-test: p = `r if(!is.null(tt)) round(tt$p.value, 4)`; the two approaches agree closely).
+Średni dzienny zwrot z akcji Apple wyniósł `r round(mean(ret_aapl)*100, 4)`%, a Microsoftu `r round(mean(ret_msft)*100, 4)`%. Różnica między nimi jest zatem minimalna. Test permutacyjny wykazał wartość p-value = `r round(p_val_mean, 4)`, co jest wynikiem znacznie powyżej progu 0,05.
 
-`r ifelse(p_val_mean < 0.05, "Since p < 0.05, we **reject H₀** — the mean daily returns differ significantly. However, note that statistical significance here does not imply economic significance: the difference is tiny in absolute terms and would be overwhelmed by transaction costs in practice.", "Since p > 0.05, we **fail to reject H₀** — the observed difference in mean returns is consistent with random variation. This is the typical result for large-cap stocks over horizons of a few years: daily mean returns are estimated with very high variance, making the test low-powered.")`
-
+Wniosek:
+Nie mamy podstaw do odrzucenia hipotezy zerowej. Oznacza to, że żadna z firm nie dała w badanym okresie istotnie wyższych zwrotów niż druga. Na giełdzie bardzo trudno jest udowodnić statystycznie różnicę w średnich zyskach w krótkim terminie, ponieważ dzienne wahania (szum) są znacznie większe niż średni zysk. Z perspektywy inwestora, obie spółki "zarabiały" na zbliżonym poziomie.
 ---
 
-## 3.4 Summary of Permutation Tests
+## 3.4 Podsumowanie testów permutacyjnych
 
 ```{r perm-summary-table}
 perm_summary <- data.frame(
-  Test         = c("Covariance significance",
-                   "Equality of variances",
-                   "Equality of expected returns"),
+  Test         = c("Istotność kowariancji",
+                   "Równość wariancji (ryzyka)",
+                   "Równość wartości oczekiwanych (zysku)"),
   H0           = c("Cov = 0", "σ²_AAPL = σ²_MSFT", "μ_AAPL = μ_MSFT"),
-  Statistic    = c(round(obs_cov, 6),
+  Statystyka   = c(round(obs_cov, 6),
                    round(obs_var_ratio, 4),
                    round(obs_diff_mean, 6)),
   p_value      = c(p_val_cov, p_val_var, p_val_mean),
-  Decision     = c(ifelse(p_val_cov  < 0.05, "Reject H₀", "Fail to reject"),
-                   ifelse(p_val_var  < 0.05, "Reject H₀", "Fail to reject"),
-                   ifelse(p_val_mean < 0.05, "Reject H₀", "Fail to reject"))
+  Decyzja      = c(ifelse(p_val_cov  < 0.05, "Odrzuć H₀", "Brak podstaw"),
+                   ifelse(p_val_var  < 0.05, "Odrzuć H₀", "Brak podstaw"),
+                   ifelse(p_val_mean < 0.05, "Odrzuć H₀", "Brak podstaw"))
 )
 
 kable(perm_summary, digits = 4,
-      caption = "Permutation Test Results (N = 10,000, α = 0.05)",
-      col.names = c("Test","Null Hypothesis H₀","Observed Statistic","p-value","Decision (α=0.05)")) |>
-  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE) |>
+      caption = "Podsumowanie testów permutacyjnych (N = 10 000, α = 0,05)",
+      col.names = c("Test", "Hipoteza zerowa H₀", "Statystyka z próby", "p-value", "Decyzja (α=0,05)")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) |>
   column_spec(5, bold = TRUE,
               color = ifelse(perm_summary$p_value < 0.05, "red", "darkgreen"))
 ```
 
+
+Powyższa tabela pokazuje, że jedynym wynikiem istotnym statystycznie jest kowariancja. Oznacza to, że Apple i Microsoft są ze sobą silnie powiązane, ale ich poziomy ryzyka (wariancja) oraz średnie zyski (średnia) nie różnią się od siebie w sposób znaczący. Z perspektywy inwestora budującego portfel z tych dwóch spółek, ich zachowanie jest bardzo podobne.
+
+
 ---
 
-# 4. Portfolio Profit Analysis
+# 4. Analiza zysku z portfela
 
-## 4.1 Strategy Description
+## 4.1 Opis strategii
 
-For every trading day $t$ we **buy 100 shares of each stock** at the closing price and **sell them 100 trading days later**:
+W tej części sprawdzamy, ile realnie zarobiłby inwestor stosujący prostą strategię: każdego dnia handlowego $t$ kupujemy po 100 akcji każdej spółki po cenie zamknięcia, a następnie sprzedajemy je dokładnie 100 dni giełdowych później.
 
+Zysk z takiego portfela ($\Pi_t$) liczymy według wzoru:
 $$\Pi_t = 100 \cdot (P^{\text{AAPL}}_{t+100} - P^{\text{AAPL}}_t) + 100 \cdot (P^{\text{MSFT}}_{t+100} - P^{\text{MSFT}}_t)$$
 
-Transaction costs are ignored. The result is a time series of overlapping 100-day holding-period profits. Since we are working on dependent observations (each window shares 99 days with its'neighbours), the descriptive statistics shown below should not be interpreted as if they came from an independent sample.
+W analizie pomijamy koszty transakcyjne (prowizje maklerskie). Wynikiem jest szereg czasowy zysków z tzw. "nakładających się okien". Ponieważ każde kolejne okno czasowe współdzieli aż 99 dni z poprzednim, uzyskane wyniki nie są od siebie niezależne. Należy o tym pamiętać przy interpretacji statystyk opisowych – dane te są ze sobą silnie skorelowane.
 
 ```{r portfolio}
 N_SHARES  <- 100
@@ -432,9 +433,9 @@ profit_portfolio <- profit_aapl + profit_msft
 n_port           <- length(profit_portfolio)
 
 port_summary <- data.frame(
-  Metric = c("N (windows)", "Mean profit (USD)", "Median profit (USD)",
-             "Std Dev (USD)", "Min (USD)", "Max (USD)",
-             "Skewness", "Excess Kurtosis"),
+  Metric = c("Liczba okien (N)", "Średni zysk (USD)", "Mediana zysku (USD)",
+           "Odchylenie std. (USD)", "Zysk minimalny (USD)", "Zysk maksymalny (USD)",
+           "Skośność", "Kurtoza "),
   Value  = c(n_port,
              round(mean(profit_portfolio), 2),
              round(median(profit_portfolio), 2),
@@ -445,11 +446,11 @@ port_summary <- data.frame(
              round(kurtosis(profit_portfolio) - 3, 4))
 )
 
-kable(port_summary, caption = "Descriptive Statistics — Portfolio Profit") |>
+kable(port_summary, caption = "Statystyki opisowe- portfel") |>
   kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
 ```
 
-The graphs below show return distribution.
+Wykresy poniżej przedstawiają rozkłady.
 
 ```{r dist-plot}
 ggplot(df_ret, aes(x = ret)) +
@@ -459,18 +460,13 @@ ggplot(df_ret, aes(x = ret)) +
                 args = list(mean = mean(df_ret$ret), sd = sd(df_ret$ret)),
                 colour = "darkred", linewidth = 1) +
   facet_wrap(~ticker, scales = "free") +
-  labs(title = "Return distributions vs fitted Normal",
-       x = "Return (%)", y = "Density")
+labs(title = "Rozkłady stóp zwrotu vs dopasowany rozkład normalny",
+       x = "Stopa zwrotu (%)", y = "Gęstość")
 ```
 
-### Overlapping Windows and Effective Sample Size
+### Nakładające się okna czasowe i efektywna wielkość próby
 
-Although we have `r n_port` profit observations, consecutive windows share 99 out of
-100 days of price data — window $t$ and window $t+1$ differ only in that one day is
-dropped at the start and one is added at the end. This induces autocorrelation in the
-profit series that persists for approximately `r HORIZON` lags. The number of approximately independent observations is closer to `r round(n_port / HORIZON)` (one per non-overlapping horizon).
-
-Switching to non-overlapping windows would reduce $n$ to ~`r round(n_port / HORIZON)`, making tail quantiles undefined and the histogram uninformative, hence we retain the overlapping design.
+Mimo że dysponujemy dużą liczbą obserwacji zysku n = `r n_port` , kolejne okna czasowe dzielą ze sobą aż 99 z 100 dni notowań. Oznacza to, że zysk z okna zaczynającego się w poniedziałek jest niemal identyczny z tym z wtorku. Powoduje to silną autokorelację, która utrzymuje się przez ok. 100 dni (co widać na wykresie poniżej).Choć statystycznie mamy tylko około `r round(n_port / HORIZON)` w pełni niezależnych obserwacji, zdecydowaliśmy się pozostać przy modelu nakładających się okien. Przejście na okna rozłączne drastycznie zmniejszyłoby liczbę danych, uniemożliwiając stworzenie czytelnego histogramu i precyzyjne wyznaczenie skrajnych wartości ryzyka (VaR).
 
 ```{r acf-plot, fig.height=3.5}
 acf_vals <- acf(profit_portfolio, lag.max = 150, plot = FALSE)
@@ -486,15 +482,15 @@ ggplot(data.frame(lag  = 1:150,
   geom_hline(yintercept = 0, colour = "grey40", linewidth = 0.4) +
   annotate("text", x = 130, y = 1.96 / sqrt(n_port) + 0.03,
            label = "95% significance band", colour = "red", size = 3.2) +
-  labs(title    = "Autocorrelation of Portfolio Profits",
-       subtitle = paste0("ACF stays elevated until lag ~", HORIZON,
-                         " — reflecting the 100-day overlap between consecutive windows"),
-       x = "Lag (trading days)", y = "Autocorrelation") +
+  labs(title    = "Autokorelacja zysków portfela",
+       subtitle = paste0("Korelacja utrzymuje sie do opóźnienia ~", HORIZON,
+                         " — wynika to z okien czasowych"),
+       x = "Opóźnienie ( w dni sesyjne)", y = "Autokorelacja") +
   theme_minimal(base_size = 12)
 ```
 ---
 
-## 4.2 Profit Distribution vs Normal
+## 4.2 Rozkład zysków i rozkład normalny  
 
 ```{r profit-histogram, fig.height=7}
 mu_port  <- mean(profit_portfolio)
@@ -508,8 +504,8 @@ alpha_levels <- c(0.05, 0.01, 0.001)
 var_emp  <- quantile(profit_portfolio, probs = alpha_levels)
 var_norm <- qnorm(alpha_levels, mean = mu_port, sd = sd_port)
 
-# --- Panel 1: Empirical VaR ---
-# Each VaR level gets its own distinct colour from a colourblind-friendly palette.
+# --- Panel 1: Empiryczny  VaR ---
+# Każdy Var jest oznaczony innym kolorem.
 emp_lines <- data.frame(
   x     = var_emp,
   level = factor(c("5%", "1%", "0.1%"), levels = c("5%", "1%", "0.1%"))
@@ -526,10 +522,10 @@ p1 <- ggplot(data.frame(profit = profit_portfolio), aes(x = profit)) +
              aes(x = x, y = Inf, label = paste0("VaR\n", level), colour = level),
              vjust = 1.3, size = 3.2, fill = "white", label.size = 0, show.legend = FALSE) +
   scale_colour_manual(values = c("5%" = "#2166ac", "1%" = "#d6604d", "0.1%" = "#762a83"),
-                      name = "Empirical VaR") +
-  labs(title    = "Panel A — Empirical VaR",
-       subtitle = sprintf("Solid blue = fitted N(μ=%.0f, σ=%.0f)", mu_port, sd_port),
-       x = "Profit (USD)", y = "Density") +
+                      name = "Empiryczny VaR") +
+  labs(title    = "Panel A — Empiryczny VaR (Wartość zagrożona)",
+       subtitle = sprintf("Ciemnoniebieska linia = dopasowany rozkład normalny N(μ=%.0f, σ=%.0f)", mu_port, sd_port),
+       x = "Zysk/Strata (USD)", y = "Gęstość") +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
 
@@ -553,57 +549,60 @@ p2 <- ggplot(data.frame(profit = profit_portfolio), aes(x = profit)) +
                       name = "VaR level") +
   scale_linetype_manual(values = c("Empirical" = "solid", "Normal" = "dashed"),
                         name = "Method") +
-  labs(title    = "Panel B — Empirical vs Normal VaR",
-       subtitle = "Solid = empirical quantile, Dashed = normal quantile; colour = level",
-       x = "Profit (USD)", y = "Density") +
+  labs(title    = "Panel B — Porównanie: VaR Empiryczny vs Teoretyczny (Normalny)",
+       subtitle = "Linia ciągła = dane z giełdy, Linia przerywana = model normalny",
+       x = "Zysk/Strata (USD)", y = "Gęstość") +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
 
 grid.arrange(p1, p2, nrow = 2)
-# Empirical ES
+# Empriryczna średnia strata gorsza niż w scenariuszach- ES
 es_emp <- sapply(alpha_levels, function(a) {
   threshold <- quantile(profit_portfolio, probs = a)
   mean(profit_portfolio[profit_portfolio <= threshold])
 })
 
-# Normal ES
-# For a normal distribution: ES_alpha = mu - sigma * phi(z_alpha) / alpha
-# where phi is the standard normal PDF and z_alpha is the standard normal quantile
+# Normalny ES (Oczekiwana Strata dla rozkładu normalnego)
+# Dla rozkładu normalnego wzór to: ES_alpha = mu - sigma * phi(z_alpha) / alpha
+# gdzie:
+# phi to gęstość standardowego rozkładu normalnego (PDF)
+# z_alpha to kwantyl standardowego rozkładu normalnego
 es_norm <- sapply(alpha_levels, function(a) {
   z <- qnorm(a)
   mu_port - sd_port * dnorm(z) / a
 })
 ```
 
-### Shapiro–Wilk Normality Test
+### Test normalności Shapiro-Wilka
 
-We formally test whether portfolio profits follow a normal distribution.
+Sprawdzamy czy rozkład zysku z portfela jest zgodny z rozkładem normalnym.
 
-**Hypotheses:**
+**Hipoteza:**
 
-$$H_0: \text{Portfolio profit is normally distributed}$$
-$$H_1: \text{Portfolio profit is NOT normally distributed}$$
+$$H_0: \text{Zyzk z portfela ma rozkład normalny}$$
+$$H_1: \text{Zysk z portfela nie ma rozkładu normalnego}$$
 
 ```{r shapiro}
 
-# we use only every 100th observation — these are approximately independent
+# Używamy co 1000 obserwacji dla ich niezależności (ze względu na nakładające się okna).
 non_overlap_idx <- seq(1, n_port, by = HORIZON)
 profit_indep    <- profit_portfolio[non_overlap_idx]
 
-cat(sprintf("Non-overlapping windows: %d\n", length(profit_indep)))
+cat(sprintf("Nie nakładające się okna: %d\n", length(profit_indep)))
 
 sw <- shapiro.test(profit_indep)
 
 cat(sprintf("Shapiro–Wilk test: W = %.5f,  p-value = %.4e\n", sw$statistic, sw$p.value))
-cat(sprintf("Decision (alpha=0.05): %s\n",
-            ifelse(sw$p.value < 0.05, "REJECT H0 — non-normal", "FAIL TO REJECT H0 — consistent with normal")))
+cat(sprintf("Decyzja (alpha=0.05): %s\n",
+            ifelse(sw$p.value < 0.05, "ODRZUĆ H0- rozkład nie jest normalny", "Nie odrzucono H0- rozkłąd jest normalny")))
 ```
 
 ### Q–Q Plot
 
 ```{r qqplot, fig.height=4.5}
-# The grey band is a 95% pointwise confidence envelope for the normal Q-Q plot.
-# Points inside the band are consistent with normality; points outside indicate departures.
+# Szary pas to 95-procentowy przedział ufności dla wykresu Q-Q.
+# Punkty wewnątrz pasa są zgodne z rozkładem normalnym; 
+# punkty poza pasem wskazują na odchylenia od normalności.
 ggplot(data.frame(profit = profit_portfolio), aes(sample = profit)) +
   stat_qq_band(distribution = "norm",
                dparams = list(mean = mu_port, sd = sd_port),
@@ -614,32 +613,32 @@ ggplot(data.frame(profit = profit_portfolio), aes(sample = profit)) +
   stat_qq_point(distribution = "norm",
                 dparams = list(mean = mu_port, sd = sd_port),
                 alpha = 0.3, size = 0.9, colour = "#333333") +
-  labs(title    = "Q–Q Plot: Portfolio Profit vs Normal Distribution",
-       subtitle = "Grey band = 95% pointwise confidence envelope; points outside → departure from normality",
-       x = "Theoretical Normal Quantiles (USD)", y = "Empirical Quantiles (USD)") +
+  labs(title    = "Wykres Q–Q: Zysk portfela vs Rozkład normalny",
+       subtitle = "Szary pas = 95% przedział ufności; punkty poza pasem = brak normalności",
+       x = "Teoretyczne kwantyle normalne (USD)", y = "Empiryczne kwantyle (USD)") +
   theme_minimal(base_size = 12)
 ```
 
-### Interpretation
+### Interpretacja
 
-`r if(sw$p.value < 0.05) paste0("The Shapiro–Wilk test strongly rejects normality (p = ", formatC(sw$p.value, format='e', digits=2), "). The Q–Q plot confirms this: the tails deviate notably from the reference line, indicating **heavier tails** than a Gaussian distribution. This is consistent with the excess kurtosis of ", round(kurtosis(profit_portfolio)-3, 3), " and skewness of ", round(skewness(profit_portfolio), 3), ". These features — common in financial return data — mean that extreme losses (and gains) occur more frequently than a normal model predicts.") else paste0("The Shapiro–Wilk test does not reject normality at the 5% level (p = ", round(sw$p.value, 4), "). The Q–Q plot is broadly consistent with a normal distribution.")`
+Przeprowadzony test Shapiro-Wilka nie daje podstaw do odrzucenia hipotezy o normalności rozkładu zysków portfela (p = `r sw$p.value` ). Wartość ta jest znacznie powyżej standardowego progu istotności 0,05.Wynik testu znajduje potwierdzenie na wykresie Q-Q. Widzimy, że niemal wszystkie punkty empiryczne (zyski z giełdy) mieszczą się wewnątrz szarego 95-procentowego przedziału ufności i ściśle przylegają do teoretycznej linii prostej. Oznacza to, że w badanym horyzoncie czasowym strategia oparta na 100-dniowym oknie inwestycyjnym generowała zyski, które można z dużym prawdopodobieństwem modelować za pomocą klasycznego rozkładu normalnego.Wniosek praktyczny: W tym przypadku stosowanie miar ryzyka opartych na rozkładzie normalnym (np. teoretyczny VaR) będzie bardzo precyzyjne i nie powinno istotnie zaniżać realnego ryzyka portfela.
 
 ---
 
-# 5. Value at Risk (VaR) and Expected Shortfall (ES)
+# 5. Wartość zagrożona (VaR) i Oczekiwana strata (ES)
 
-**Value at Risk at level $\alpha$** is the threshold loss such that the probability of the portfolio return falling *below* it is $\alpha$:
+**Wartość zagrożona na poziomie $\alpha$** to próg straty, dla którego prawdopodobieństwo, że wynik portfela spadnie poniżej tej wartości, wynosi dokładnie $\alpha$:
 
 $$\text{VaR}_\alpha = Q_\alpha(\Pi) \quad \text{i.e.,} \quad P(\Pi \leq \text{VaR}_\alpha) = \alpha$$
 
-A *negative* VaR denotes a loss. We compute two variants:
+Wartość ujemna oznacza stratę. Obliczamy dwa warianty:
 
-- **Empirical VaR:** the empirical $\alpha$-quantile of observed profits.  
-- **Normal VaR:** the $\alpha$-quantile of $\mathcal{N}(\hat\mu, \hat\sigma^2)$ fitted to the data.
+- **VaR empiryczny:** wyznaczony bezpośrednio jako kwantyl z zaobserwowanych historycznych zysków.
+- **VaR normalny:** wyznaczony teoretycznie z dopasowanego do danych rozkładu normalnego $\mathcal{N}(\hat\mu, \hat\sigma^2)$ .
 
-**Expected Shortfall (ES) at level $\alpha$** — also called Conditional VaR — is the average loss in the worst $\alpha$% of scenarios: 
+**Oczekiwana strata (ES) na poziomie$\alpha$** — nazywana także warunkowym VaR — to średnia strata w najgorszym $\alpha$% scenariuszy: 
 $$ES_\alpha = E[\Pi \mid \Pi \leq \text{VaR}_\alpha]$$
-It is reported alongside VaR as it better captures the severity of tail losses, not just their threshold.
+ES dostarcza pełniejszej informacji niż VaR, ponieważ mówi nie tylko o samym progu, ale o skali (głębokości) strat, gdy ten próg zostanie już przekroczony.
 
 ```{r var-es-table}
 
@@ -652,88 +651,113 @@ var_es_df <- data.frame(
   Normal_ES     = round(es_norm, 2)
 )
 
-kable(var_es_df, caption = "Value at Risk — Empirical vs Normal (USD)",
-      col.names = c("Confidence Level", "Empirical VaR (USD)",
-                    "Normal VaR (USD)", "Difference (Emp − Norm)", 
-                    "Empirical ES (USD)", "Normal ES (USD)")) |>
+kable(var_es_df, caption = "Wartość zagrożona (VaR) — Empiryczna vs Normalna (USD)",
+      col.names = c("Poziom ufności (alpha)", "VaR Empiryczny (USD)", 
+                    "VaR Normalny (USD)", "Różnica (Emp - Norm)", 
+                    "ES Empiryczny (USD)", "ES Normalny (USD)")) |>
   kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE)
 ```
 
-```{r var-viz, fig.height=4}
+```{r var-viz, fig.height=5, fig.width=8}
 var_comp <- data.frame(
   level  = rep(c("5%","1%","0.1%"), 2),
-  method = rep(c("Empirical","Normal"), each = 3),
+  method = rep(c("Empiryczny","Normalny"), each = 3),
   value  = c(var_emp, var_norm)
 )
 var_comp$level <- factor(var_comp$level, levels = c("5%","1%","0.1%"))
 
 ggplot(var_comp, aes(x = level, y = value, fill = method)) +
-  geom_col(position = "dodge", width = 0.6) +
-  geom_text(aes(label = sprintf("$%.0f", value),
-                vjust = ifelse(value < 0, 1.4, -0.4)),
-            position = position_dodge(width = 0.6), size = 3.2) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+
+  geom_text(aes(label = sprintf("$%.0f", value)), 
+            position = position_dodge(width = 0.7), 
+            vjust = 1.5, 
+            size = 3.5,
+            fontface = "bold") +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40") +
-  scale_fill_manual(values = c("Empirical" = "#e63946", "Normal" = "#457b9d")) +
-  scale_y_continuous(labels = scales::dollar_format()) +
-  annotate("text", x = 0.5, y = min(c(var_emp, var_norm)) * 0.85,
-           label = "← Loss territory", hjust = 0, size = 3.2, colour = "grey40") +
-  labs(title    = "Empirical vs Normal VaR by Confidence Level",
-       subtitle = "Negative values = losses; bars below zero are worse outcomes",
-       x = "Significance Level (α)", y = "VaR (USD)", fill = "Method") +
-  theme_minimal(base_size = 12)
+  scale_fill_manual(values = c("Empiryczny" = "#e63946", "Normalny" = "#457b9d"), 
+                    name = "Metoda") +
+  # ROZWIĄZANIE: Rozszerzamy oś Y w dół (o ok. 20% więcej miejsca niż najniższy słupek)
+  scale_y_continuous(labels = scales::dollar_format(), 
+                     limits = c(min(var_comp$value) * 1.25, 500),
+                     expand = c(0, 0)) +
+   labs(title    = "Porównanie VaR: Empiryczny vs Normalny",
+       subtitle = "Wartości ujemne oznaczają potencjalne straty portfela (100 dni)",
+       x = "Poziom istotności (alpha)", y = "Wartość zagrożona (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top",
+        panel.grid.minor = element_blank(),
+        plot.margin = margin(10, 10, 20, 10)) 
 ```
 
-### Interpretation
 
-| Level | Empirical VaR | Normal VaR | Observation |
-|-------|-------------|-----------|-------------|
-| **5%**   | `r round(var_emp[1],0)` USD | `r round(var_norm[1],0)` USD | `r ifelse(abs(var_emp[1]) > abs(var_norm[1]), "Emp. loss larger — normal underestimates risk", "Normal loss larger — normal overestimates risk")` |
-| **1%**   | `r round(var_emp[2],0)` USD | `r round(var_norm[2],0)` USD | `r ifelse(abs(var_emp[2]) > abs(var_norm[2]), "Emp. loss larger — normal underestimates risk", "Normal loss larger")` |
-| **0.1%** | `r round(var_emp[3],0)` USD | `r round(var_norm[3],0)` USD | `r ifelse(abs(var_emp[3]) > abs(var_norm[3]), "Emp. loss larger — normal significantly underestimates tail risk", "Normal loss larger")` |
+### Interpretacja
 
-`r if(abs(var_emp[3]) > abs(var_norm[3])) "The divergence grows as α decreases (i.e., as we move deeper into the left tail). This is the **fat-tail effect**: extreme losses occur more frequently in real data than a Gaussian model predicts. Using the normal VaR at the 0.1% level would therefore **underestimate** the true tail risk, which is a well-known pitfall in financial risk management." else "The normal approximation performs reasonably well across all confidence levels for this portfolio."`
+Na poziomie 5% i 1% różnice między Var empirycznym a normalnym są niewielkie, lecz większe wartości osiąga Var empiryczny. Wskazuje to że rozkład normalny dość dobrze opisuje mój portfel, ale delikatnie niedoszacowuje ryzyka. Na poziomie 0.1% wyniki są nadal podobne, ale tym razem to rozkład normalny osiąga większą wartość- oznacza to, że na rynku w badanym okresie nie wystąpiły żadne krachy ani duże niepewności. 
 
 ---
 
-# 6. Conclusions
+# 6. Wnioski
 
 ```{r conclusions-table}
+# Tworzymy ramkę danych z podsumowaniem wyników
 conclusions <- data.frame(
-  Question = c(
-    "Are AAPL and MSFT returns linearly dependent?",
-    "Do they have equal volatility?",
-    "Do they have equal expected returns?",
-    "Is the portfolio profit normally distributed?",
-    "Does normal VaR capture tail risk accurately?"
+  Pytanie = c(
+    "Czy zwroty AAPL i MSFT są liniowo zależne?",
+    "Czy mają taką samą zmienność (wariancję)?",
+    "Czy mają takie same oczekiwane stopy zwrotu?",
+    "Czy zysk portfela ma rozkład normalny?",
+    "Czy teoretyczny VaR dobrze oddaje ryzyko ekstremalne?"
   ),
-  Finding = c(
+  Wynik = c(
+    # 1. Kowariancja
     ifelse(p_val_cov  < 0.05,
-           paste0("Yes — covariance is significant (p = ", round(p_val_cov, 4), ")"),
-           paste0("No evidence — covariance not significant (p = ", round(p_val_cov, 4), ")")),
+           paste0("Tak — kowariancja jest istotna (p = ", round(p_val_cov, 4), ")"),
+           paste0("Brak dowodów — kowariancja nieistotna (p = ", round(p_val_cov, 4), ")")),
+    
+    # 2. Wariancja
     ifelse(p_val_var  < 0.05,
-           paste0("No — variances differ significantly (p = ", round(p_val_var, 4), ")"),
-           paste0("Possibly — no significant difference (p = ", round(p_val_var, 4), ")")),
+           paste0("Nie — wariancje różnią się istotnie (p = ", round(p_val_var, 4), ")"),
+           paste0("Prawdopodobnie tak — brak istotnych różnic (p = ", round(p_val_var, 4), ")")),
+    
+    # 3. Średnie
     ifelse(p_val_mean < 0.05,
-           paste0("No — means differ significantly (p = ", round(p_val_mean, 4), ")"),
-           paste0("Possibly — no significant difference (p = ", round(p_val_mean, 4), ")")),
+           paste0("Nie — średnie różnią się istotnie (p = ", round(p_val_mean, 4), ")"),
+           paste0("Prawdopodobnie tak — brak istotnych różnic (p = ", round(p_val_mean, 4), ")")),
+    
+    # 4. Normalność (Shapiro-Wilk)
     ifelse(sw$p.value < 0.05,
-           paste0("No — Shapiro–Wilk rejects normality (p = ", formatC(sw$p.value, format='e', digits=1), ")"),
-           paste0("Consistent with normal (p = ", round(sw$p.value, 4), ")")),
+           paste0("Nie — test Shapiro–Wilka odrzuca normalność (p = ", formatC(sw$p.value, format='e', digits=1), ")"),
+           paste0("Zgodny z rozkładem normalnym (p = ", round(sw$p.value, 4), ")")),
+    
+    # 5. Dopasowanie VaR
     ifelse(abs(var_emp[3]) > abs(var_norm[3]),
-           "No — normal VaR underestimates extreme losses (fat tails)",
-           "Approximately yes — normal VaR is close to empirical")
+           "Nie — normalny VaR niedoszacowuje strat (grube ogony)",
+           "Zasadniczo tak — teoretyczny VaR jest bliski empirycznemu")
   )
 )
 
-kable(conclusions, caption = "Summary of Key Findings",
-      col.names = c("Question", "Finding")) |>
-  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE) |>
+kable(conclusions, caption = "Podsumowanie kluczowych wniosków z analizy",
+      col.names = c("Pytanie badawcze", "Wniosek / Wynik testu")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
   column_spec(1, bold = TRUE, width = "40%") |>
   column_spec(2, width = "60%")
 ```
 
-> **Key takeaway for risk management:** Assuming normality of portfolio returns leads to systematic underestimation of tail risk at very low probability levels. Empirical or parametric heavy-tailed distributions (e.g., Student-$t$, Cornish–Fisher expansion) should be preferred for VaR estimation at the 1% and 0.1% levels.
+
+### Podsumowanie i wnioski końcowe
+
+
+Przeprowadzona analiza statystyczna portfela akcji Apple (AAPL) oraz Microsoft (MSFT) w latach 2021–2024 pozwala na sformułowanie następujących konkluzji:Silna współzależność liderów sektora: 
+
+- Testy permutacyjne jednoznacznie wykazały istotną statystycznie kowariancję między badanymi spółkami. Oznacza to, że portfel złożony z tych dwóch podmiotów jest silnie narażony na ryzyko systematyczne (sektorowe). Dywersyfikacja wewnątrz tej pary jest ograniczona – akcje te zazwyczaj zyskują i tracą w tym samym czasie.
+
+- Statystyczna "bliźniaczość" stóp zwrotu: Mimo że są to odrębne korporacje, testy równości wariancji oraz oczekiwanych stóp zwrotu nie wykazały istotnych różnic ($p > 0,05$). Z perspektywy inwestora długoterminowego, w badanym okresie obie spółki oferowały niemal identyczny profil ryzyka do zysku.
+
+- Wiarygodność modeli matematycznych: Analiza zysku portfela metodą 100-dniowego okna wykazała, że rozkład zysków jest zaskakująco bliski rozkładowi normalnemu (co potwierdził test Shapiro-Wilka oraz wykres Q-Q). Jest to sytuacja korzystna dla zarządzających ryzykiem, ponieważ klasyczne miary, takie jak Value at Risk (VaR), nie niedoszacowują tutaj realnego zagrożenia.
+
+- Realne ryzyko inwestycyjne: Strategia polegająca na zakupie 200 akcji (po 100 na spółkę) wiąże się z konkretnym ryzykiem finansowym. Z 95-procentową pewnością można stwierdzić, że maksymalna strata w horyzoncie 100 dni nie przekroczy kwoty ok. 7 100 USD. Jednak w scenariuszach skrajnych (poziom 0,1%), strata ta może wzrosnąć nawet do ponad 12 500 USD.
+
 
 ---
 
-*Report generated with R `r R.version$major`.`r R.version$minor` · quantmod · ggplot2 · moments*
