@@ -187,7 +187,6 @@ Uzywamy **N = 10,000 permutacji** dla każdego z testów, a wszystkie p-value li
 
 ```{r perm-setup}
 N_PERM   <- 10000
-combined <- c(ret_aapl, ret_msft)   # próbka testowa
 ```
 
 ---
@@ -254,7 +253,8 @@ $$H_1: \sigma^2_{\text{AAPL}} \neq \sigma^2_{\text{MSFT}} \quad \text{zmiennośc
 
 **Statystyka testowa:** $T = \ln\!\left(\hat\sigma^2_{\text{AAPL}} / \hat\sigma^2_{\text{MSFT}}\right)$
 
-Wykorzystujemy logarytm stosunku wariancji, ponieważ jest on statystyką symetryczną względem zera w przypadku prawdziwości hipotezy zerowej. W teście permutacyjnym łączymy stopy zwrotu obu spółek i losowo dzielimy je na dwie nowe grupy. Jeśli w rzeczywistości ryzyko obu spółek jest podobne, to logarytm stosunku wariancji w naszych symulacjach powinien oscylować wokół zera. Sprawdzając, jak bardzo nasz realny wynik odbiega od tych symulacji, oceniamy, czy różnica w ryzyku między Apple a Microsoftem jest statystycznie istotna.
+Wykorzystujemy logarytm stosunku wariancji, ponieważ jest on statystyką symetryczną względem zera w przypadku prawdziwości hipotezy zerowej. W teście permutacyjnym zachowujemy strukturę par — dla każdego dnia losowo zamieniamy miejscami zwroty obu spółek (z prawdopodobieństwem 0,5). Dzięki temu niszczymy
+asymetrię między grupami, ale zachowujemy zależność czasową między spółkami. Jeśli w rzeczywistości ryzyko obu spółek jest podobne, to logarytm stosunku wariancji w naszych symulacjach powinien oscylować wokół zera. Sprawdzając, jak bardzo nasz realny wynik odbiega od tych symulacji, oceniamy, czy różnica w ryzyku między Apple a Microsoftem jest statystycznie istotna.
 
 ```{r perm-var, fig.height=4}
 
@@ -693,7 +693,9 @@ ggplot(var_comp, aes(x = level, y = value, fill = method)) +
 
 ### Interpretacja
 
-Na poziomie 5% i 1% różnice między Var empirycznym a normalnym są niewielkie, lecz większe wartości osiąga Var empiryczny. Wskazuje to że rozkład normalny dość dobrze opisuje mój portfel, ale delikatnie niedoszacowuje ryzyka. Na poziomie 0.1% wyniki są nadal podobne, ale tym razem to rozkład normalny osiąga większą wartość- oznacza to, że na rynku w badanym okresie nie wystąpiły żadne krachy ani duże niepewności. 
+Na poziomie 5% i 1% różnice między Var empirycznym a normalnym są niewielkie, lecz większe wartości osiąga Var empiryczny. Wskazuje to że rozkład normalny dość dobrze opisuje mój portfel, ale delikatnie niedoszacowuje ryzyka. Na poziomie 0.1% normalny VaR osiąga większą wartość (bardziej ujemną) niż empiryczny. Oznacza to, że model normalny jest w tym miejscu konserwatywny — zakłada grubszy ogon
+niż rzeczywiście zaobserwowano w danych. Innymi słowy, skrajne straty w badanym okresie
+były łagodniejsze niż sugerowałby rozkład normalny.
 
 ---
 
