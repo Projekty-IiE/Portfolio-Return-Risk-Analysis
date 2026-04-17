@@ -51,4 +51,4 @@ The project evaluates the tail risk of the strategy's empirical profit distribut
 📊 **[Click here to view the full HTML report](https://Projekty-IiE.github.io/Portfolio-Return-Risk-Analysis/Portfolio-Return-Risk-Analysis.html)**
 
 ## Project Type
-This is a university course project developed for a Computer Science and Econometrics degree program, bridging the gap between statistical theory and computational finance.
+This is a university course project developed for a Computer Science and Econometrics degree program.
