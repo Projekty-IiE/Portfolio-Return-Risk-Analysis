@@ -36,6 +36,9 @@ The project evaluates the tail risk of the strategy's empirical profit distribut
 - **Returns:** No statistically significant difference in mean daily returns was found between the two stocks.
 - **Risk Estimation:** The portfolio profits deviate from a normal distribution. While parametric normal VaR underestimates tail risk at the 5% and 1% levels (a common fat-tail effect), it overestimates the risk at the 0.1% level, highlighting the limitations of empirical deep-tail estimation.
 
+<img width="1920" height="960" alt="image" src="https://github.com/user-attachments/assets/30522482-e5aa-4c20-932d-815609f761ea" />
+
+
 ## Technologies & Packages
 - **Language:** R
 - **Data Retrieval:** `quantmod`
@@ -43,7 +46,7 @@ The project evaluates the tail risk of the strategy's empirical profit distribut
 - **Time Series & Stats:** `zoo`, `moments`
 - **Reporting:** RMarkdown, `knitr`, `kableExtra`
 
-## How to Run
+## How to View
 
 📊 **[Click here to view the full HTML report](https://Projekty-IiE.github.io/Portfolio-Return-Risk-Analysis/Portfolio-Return-Risk-Analysis.html)**
 
