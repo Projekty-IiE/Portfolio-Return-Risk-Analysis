@@ -1,9 +1,9 @@
 # Portfolio Return Risk Analysis
 
-**Stock Return Analysis, Permutation Testing, and Portfolio Risk (VaR)**
+**Stock Return Analysis, Permutation Testing, and Portfolio Risk (VaR, ES)**
 
 ## Overview
-This repository contains a quantitative finance project focused on the analysis of stock returns, non-parametric inference, and portfolio risk assessment. The report specifically examines **Apple Inc. (AAPL)** and **Microsoft Corp. (MSFT)** over a 4-year trading period (2021–2024).
+This repository contains a quantitative finance project focused on the analysis of stock returns, inference using resampling methods, and portfolio risk assessment. The report examines **Apple Inc. (AAPL)** and **Microsoft Corp. (MSFT)** over a 4-year trading period (2021–2024).
 
 ## Objectives
 - Extract and process adjusted closing prices for AAPL and MSFT to compute daily logarithmic returns.
@@ -27,14 +27,14 @@ Based on this strategy:
 ## Risk Analysis
 The project evaluates the tail risk of the strategy's empirical profit distribution:
 - Visual and formal normality checks (Q-Q plots, Shapiro-Wilk test).
-- Calculation of **Value at Risk (VaR)** and **Expected Shortfall (ES)** at deep tail levels: 5%, 1%, and 0.1%.
-- A comparative analysis evaluating the accuracy of parametric normal VaR vs. empirical VaR. Results show that assuming normality underestimates risk at the 5% and 1% levels, but overestimates the extreme tail loss at the 0.1% level for this specific dataset.
+- Calculation of **Value at Risk (VaR)** and **Expected Shortfall (ES)** at tail levels of: 5%, 1%, and 0.1%.
+- A comparative analysis evaluating the accuracy of normal VaR vs. empirical VaR. Results show that assuming normality underestimates risk at the 5% and 1% levels, but overestimates the extreme tail loss at the 0.1% level for this specific dataset.
 
 ## Key Findings
 - **Dependence:** AAPL and MSFT show a statistically significant positive covariance.
-- **Volatility:** AAPL exhibited significantly higher daily return variance than MSFT during the 2021-2024 period.
+- **Volatility:** No statistically significant difference in daily return variance was found between the two stocks.
 - **Returns:** No statistically significant difference in mean daily returns was found between the two stocks.
-- **Risk Estimation:** The portfolio profits deviate from a normal distribution. While parametric normal VaR underestimates tail risk at the 5% and 1% levels (a common fat-tail effect), it overestimates the risk at the 0.1% level, highlighting the limitations of empirical deep-tail estimation.
+- **Risk Estimation:** The portfolio profits deviate from a normal distribution. While normal VaR underestimates tail risk at the 5% and 1% levels (a common fat-tail effect), it overestimates the risk at the 0.1% level, highlighting the limitations of empirical deep-tail estimation.
 
 <img width="1920" height="960" alt="image" src="https://github.com/user-attachments/assets/30522482-e5aa-4c20-932d-815609f761ea" />
 
@@ -49,6 +49,3 @@ The project evaluates the tail risk of the strategy's empirical profit distribut
 ## How to View
 
 📊 **[Click here to view the full HTML report](https://Projekty-IiE.github.io/Portfolio-Return-Risk-Analysis/Portfolio-Return-Risk-Analysis.html)**
-
-## Project Type
-This is a university course project developed for a Computer Science and Econometrics degree program.
