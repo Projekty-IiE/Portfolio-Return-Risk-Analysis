@@ -257,7 +257,7 @@ $$H_1: \sigma^2_{\text{AAPL}} \neq \sigma^2_{\text{MSFT}} \quad \text{(different
 
 **Test statistic:** $T = \ln\!\left(\hat\sigma^2_{\text{AAPL}} / \hat\sigma^2_{\text{MSFT}}\right)$
 
-We use the **log-ratio** of sample variances (rather than the raw ratio) because it is symmetric under $H_0$ and has a more stable permutation distribution. Under $H_0$, pooling both samples and randomly splitting them into two equal groups should produce a ratio close to 1 (i.e., log-ratio close to 0).
+We use the **log-ratio** of sample variances (rather than the raw ratio) because it is symmetric under $H_0$ and has a more stable permutation distribution. Under $H_0$, the labels for each pair are exchangeable, and randomly swapping observations within each day should produce a ratio close to 1 (i.e., log-ratio close to 0).
 
 ```{r perm-var, fig.height=4}
 
@@ -324,13 +324,12 @@ $$H_1: \mu_{\text{AAPL}} \neq \mu_{\text{MSFT}} \quad \text{(different mean dail
 
 **Test statistic:** $T = \bar r_{\text{AAPL}} - \bar r_{\text{MSFT}}$
 
-Under $H_0$ the label "AAPL" vs "MSFT" is exchangeable; randomly reassigning observations to groups should produce differences near zero.
+Under $H_0$ the label "AAPL" vs "MSFT" is exchangeable; randomly reassigning observations to groups (swapping labels within each day) should produce differences near zero.
 
 ```{r perm-mean, fig.height=4}
 obs_diff_mean  <- mean(ret_aapl) - mean(ret_msft)
 
-# analogously to mean-centering, now we divide by sd to be able to compare means
-diffs <- ret_aapl/sd(ret_aapl) - ret_msft/sd(ret_msft)
+diffs <- ret_aapl - ret_msft
 
 perm_diff_mean <- replicate(N_PERM, {
   signs <- sample(c(-1, 1), n, replace = TRUE)
@@ -369,9 +368,8 @@ cat(sprintf("Permutation p-value:      %.4f\n", p_val_mean))
 cat(sprintf("Decision (alpha=0.05): %s\n",
             ifelse(p_val_mean < 0.05, "REJECT H0", "FAIL TO REJECT H0")))
 
-# Classical Welch t-test for comparison
-tt <- t.test(ret_aapl, ret_msft)
-cat(sprintf("Welch t-test p-value (classical):  %.4f\n", tt$p.value))
+tt <- t.test(ret_aapl, ret_msft, paired=T)
+cat(sprintf("Paired t-test p-value (for comparison):  %.4f\n", tt$p.value))
 ```
 
 ### Interpretation
