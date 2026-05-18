@@ -374,7 +374,7 @@ cat(sprintf("Paired t-test p-value (for comparison):  %.4f\n", tt$p.value))
 
 ### Interpretation
 
-The difference in sample means is **`r formatC(obs_diff_mean, format="e", digits=2)`** per day (`r round(obs_diff_mean * 252 * 100, 2)`% annualised). Under H₀, pooling both return series and randomly splitting them should produce differences scattered around zero — which the bell-shaped permutation distribution confirms. The permutation p-value is **p = `r round(p_val_mean, 4)`** (Welch t-test: p = `r if(!is.null(tt)) round(tt$p.value, 4)`; the two approaches agree closely).
+The difference in sample means is **`r formatC(obs_diff_mean, format="e", digits=2)`** per day (`r round(obs_diff_mean * 252 * 100, 2)`% annualised). Under H₀, pooling both return series and randomly splitting them should produce differences scattered around zero — which the bell-shaped permutation distribution confirms. The permutation p-value is **p = `r round(p_val_mean, 4)`** (Paired t-test: p = `r if(!is.null(tt)) round(tt$p.value, 4)`; the two approaches agree closely).
 
 `r ifelse(p_val_mean < 0.05, "Since p < 0.05, we **reject H₀** — the mean daily returns differ significantly. However, note that statistical significance here does not imply economic significance: the difference is tiny in absolute terms and would be overwhelmed by transaction costs in practice.", "Since p > 0.05, we **fail to reject H₀** — the observed difference in mean returns is consistent with random variation. This is the typical result for large-cap stocks over horizons of a few years: daily mean returns are estimated with very high variance, making the test low-powered.")`
 
